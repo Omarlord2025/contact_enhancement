@@ -81,6 +81,49 @@ def create_minimal_contact(first_name, phone, country=None):
 	return contact.name
 
 
+def escape_like_wildcards(txt):
+	"""Neutralize LIKE's own wildcards in user-supplied search text, so a
+	"%" or "_" typed into a search box is matched literally instead of
+	being executed as a pattern.
+
+	Frappe's query builder parameterizes values against SQL *injection*,
+	but a parameterized value is still interpreted as a LIKE *pattern* -
+	so "%" reaching `LIKE '%…%'` unescaped matches every row and turns the
+	Contact search into an unbounded scan of the whole Contact/Contact
+	Phone join. At production volume that is a self-inflicted outage that
+	any user can trigger by typing one character.
+
+	Escapes the escape character itself first, or "\\%" would become
+	"\\\\%" - an escaped backslash followed by a live wildcard.
+
+	Args:
+		txt: raw search text as typed, or None.
+
+	Returns:
+		The text with backslash, "%" and "_" backslash-escaped (MariaDB's
+		default LIKE escape character), or the original falsy value
+		unchanged.
+	"""
+	if not txt:
+		return txt
+	return txt.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _is_e164_prefix_query(cleaned_txt):
+	"""Whether a search string is unambiguously the start of an E.164
+	phone number ("+" followed by digits only) - see _contact_search_query
+	for why that case is narrowed to a single anchored, index-usable
+	predicate instead of the general four-way wildcard search.
+
+	Args:
+		cleaned_txt: search text with formatting noise already stripped.
+
+	Returns:
+		True if it starts with "+" and every remaining character is a digit.
+	"""
+	return bool(cleaned_txt) and cleaned_txt.startswith("+") and cleaned_txt[1:].isdigit()
+
+
 def _contact_search_query(txt, start, page_len):
 	"""Shared Contact<->Contact Phone join/filter/pagination, reused by
 	both search_contact_by_phone (native Link-field dropdown, flat-tuple
@@ -118,16 +161,39 @@ def _contact_search_query(txt, start, page_len):
 	# the query text itself, so "+20 101 234 5678" or "010-1234-5678"
 	# matches the compact digit strings both fields actually hold.
 	cleaned_txt = strip_phone_formatting_noise(txt) or txt
+	safe_txt = escape_like_wildcards(txt)
+	safe_cleaned_txt = escape_like_wildcards(cleaned_txt)
+
+	if _is_e164_prefix_query(cleaned_txt):
+		# An "+…"-prefixed query can only ever be an E.164 number, and
+		# `phone` is the only column that stores one - custom_phone_national
+		# holds bare local digits (never a "+"), and a full_name never
+		# contains one. So this narrows to a single ANCHORED prefix match,
+		# which the phone_index can actually serve as a range scan, instead
+		# of four leading-wildcard predicates that force a full scan of the
+		# Contact/Contact Phone join. This matters because phone numbers are
+		# now *displayed* in E.164 everywhere, so pasting "+201012345678"
+		# straight back into the search box is a normal thing to do.
+		#
+		# Deliberate, documented trade-off: an email using plus-addressing
+		# ("omar+20@example.com") is no longer found by searching "+20".
+		# Matching a phone-shaped query against an email local-part was
+		# never the intent, and the full scan it costs is not worth keeping
+		# for it.
+		conditions = contact_phone.phone.like(f"{safe_cleaned_txt}%")
+	else:
+		conditions = (
+			contact.full_name.like(f"%{safe_txt}%")
+			| contact.email_id.like(f"%{safe_txt}%")
+			| contact_phone.phone.like(f"%{safe_cleaned_txt}%")
+			| contact_phone.custom_phone_national.like(f"%{safe_cleaned_txt}%")
+		)
+
 	query = (
 		frappe.qb.from_(contact)
 		.left_join(contact_phone)
 		.on(contact_phone.parent == contact.name)
-		.where(
-			contact.full_name.like(f"%{txt}%")
-			| contact.email_id.like(f"%{txt}%")
-			| contact_phone.phone.like(f"%{cleaned_txt}%")
-			| contact_phone.custom_phone_national.like(f"%{cleaned_txt}%")
-		)
+		.where(conditions)
 		.groupby(contact.name)
 		.limit(page_len)
 		.offset(start)

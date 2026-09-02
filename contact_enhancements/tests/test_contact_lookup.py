@@ -8,6 +8,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.api.contact_lookup import (
 	create_minimal_contact,
+	escape_like_wildcards,
 	get_address_from_contact_links,
 	get_addresses_for_contact,
 	search_contact_by_phone,
@@ -67,6 +68,65 @@ class TestSearchContactByPhone(FrappeTestCase):
 
 	def test_no_match_returns_empty(self):
 		self.assertEqual(self._search("no-such-contact-xyz"), ())
+
+	def test_matches_a_full_e164_query(self):
+		# Numbers are displayed in E.164 everywhere now, so pasting one
+		# straight back into the search box is a normal thing to do. This
+		# is the case that would regress if the `phone` predicate were
+		# simply dropped in favor of custom_phone_national - national holds
+		# bare local digits ("01099733402") and can never match a "+"
+		# prefixed query.
+		contact = make_contact(phone_nos=["01099733402"])
+		names = [r[0] for r in self._search("+201099733402")]
+		self.assertIn(contact.name, names)
+
+	def test_matches_a_partial_e164_prefix(self):
+		contact = make_contact(phone_nos=["01099733403"])
+		names = [r[0] for r in self._search("+2010997334")]
+		self.assertIn(contact.name, names)
+
+	def test_matches_an_e164_query_typed_with_formatting_noise(self):
+		# Formatting noise is stripped before the "+…digits" test, so a
+		# pasted, spaced-out number still takes the anchored-prefix path.
+		contact = make_contact(phone_nos=["01099733404"])
+		names = [r[0] for r in self._search("+20 109 973 3404")]
+		self.assertIn(contact.name, names)
+
+	def test_a_percent_is_searched_literally_not_as_a_wildcard(self):
+		# Unescaped, "%" reaches LIKE '%%%' and matches every Contact in
+		# the table - at production volume, a full scan of the whole
+		# Contact/Contact Phone join that any user can trigger by typing
+		# one character.
+		make_contact(first_name="Wildcard Probe Person")
+		self.assertEqual(self._search("%"), ())
+
+	def test_an_underscore_is_searched_literally_not_as_a_wildcard(self):
+		# "_" is LIKE's single-character wildcard, so "z_q" unescaped would
+		# match "zaq", "zbq", ... Only a literal "z_q" should match.
+		contact = make_contact(first_name="Zaq Underscore Probe")
+		names = [r[0] for r in self._search("Z_q")]
+		self.assertNotIn(contact.name, names)
+
+
+class TestEscapeLikeWildcards(FrappeTestCase):
+	def test_escapes_percent(self):
+		self.assertEqual(escape_like_wildcards("50%"), "50\\%")
+
+	def test_escapes_underscore(self):
+		self.assertEqual(escape_like_wildcards("a_b"), "a\\_b")
+
+	def test_escapes_the_escape_character_first(self):
+		# A backslash must be doubled before the wildcards are escaped, or
+		# "\%" would become "\\%" - an escaped backslash followed by a
+		# still-live wildcard.
+		self.assertEqual(escape_like_wildcards("\\%"), "\\\\\\%")
+
+	def test_leaves_ordinary_text_untouched(self):
+		self.assertEqual(escape_like_wildcards("Omar Ahmed"), "Omar Ahmed")
+
+	def test_passes_falsy_values_through_unchanged(self):
+		self.assertIsNone(escape_like_wildcards(None))
+		self.assertEqual(escape_like_wildcards(""), "")
 
 
 class TestCreateMinimalContact(FrappeTestCase):
