@@ -372,7 +372,14 @@ def get_addresses_for_contact(contact):
 	if not rows:
 		return []
 
-	source_by_address = {row["address"]: (row["source_doctype"], row["source_name"]) for row in rows}
+	# source_title comes back from get_all_addresses_for_contact already
+	# resolved, so labelling below costs no further queries - it used to
+	# run one lookup per address, repeated identically for every address
+	# reached via the same Customer/Supplier/Employee.
+	source_by_address = {
+		row["address"]: (row["source_doctype"], row["source_name"], row.get("source_title"))
+		for row in rows
+	}
 	addresses = frappe.get_all(
 		"Address",
 		filters={"name": ["in", list(source_by_address.keys())]},
@@ -380,6 +387,6 @@ def get_addresses_for_contact(contact):
 		order_by="creation desc",
 	)
 	for addr in addresses:
-		source_doctype, source_name = source_by_address[addr.name]
-		addr["source_label"] = address_source_label(source_doctype, source_name)
+		source_doctype, source_name, source_title = source_by_address[addr.name]
+		addr["source_label"] = address_source_label(source_doctype, source_name, title=source_title)
 	return addresses

@@ -199,11 +199,17 @@ def get_all_addresses_for_user(user=None, contact=None):
 			)
 		)
 
-	source_by_address = {name: ("User", user) for name in address_names_direct}
+	# The third tuple slot is the source record's display title, which
+	# get_all_addresses_for_contact now resolves in the same read as the
+	# addresses - so labelling below costs no extra queries. A directly
+	# linked Address needs none (it renders as "Linked directly").
+	source_by_address = {name: ("User", user, None) for name in address_names_direct}
 
 	if contact:
 		for row in get_all_addresses_for_contact(contact, exclude_doctype="User", exclude_name=user):
-			source_by_address.setdefault(row["address"], (row["source_doctype"], row["source_name"]))
+			source_by_address.setdefault(
+				row["address"], (row["source_doctype"], row["source_name"], row.get("source_title"))
+			)
 
 	if not source_by_address:
 		return []
@@ -215,9 +221,9 @@ def get_all_addresses_for_user(user=None, contact=None):
 		order_by="creation desc",
 	)
 	for addr in addresses:
-		source_doctype, source_name = source_by_address[addr.name]
+		source_doctype, source_name, source_title = source_by_address[addr.name]
 		addr["removable"] = addr.name in address_names_direct
 		addr["source_label"] = address_source_label(
-			source_doctype, source_name, direct_doctype="User", direct_name=user
+			source_doctype, source_name, direct_doctype="User", direct_name=user, title=source_title
 		)
 	return addresses

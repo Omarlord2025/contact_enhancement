@@ -219,49 +219,101 @@ _ALL_ADDRESS_SOURCE_DOCTYPES = ("Customer", "Supplier", "Employee", "Lead", "Use
 _ADDRESS_FIELD_BY_SOURCE_DOCTYPE = dict(_PRIMARY_ADDRESS_FIELD_BY_DOCTYPE, Employee="employee_primary_address")
 
 
-def _addresses_linked_to(doctype, name):
-	"""Every Address tied to one specific doctype record - both the one
-	named in a primary-address Link field (Customer/Supplier/Employee, if
-	set) AND every Address Dynamic-Linked to that record directly,
-	whether or not it's also the "primary" one.
+def addresses_linked_to_many(names_by_doctype):
+	"""Every Address tied to each of many doctype records at once - both
+	the one named in a primary-address Link field (Customer/Supplier/
+	Employee, if set) AND every Address Dynamic-Linked to that record
+	directly, whether or not it's also the "primary" one.
 
-	Confirmed the hard way live this second half is genuinely necessary,
-	not redundant: ERPNext's own native "Address & Contacts" widget (and
+	Batched deliberately, and this is the shared entry point for that rule
+	- resolving one record at a time cost 2 queries *per linked record*
+	inside get_all_addresses_for_contact's own loop, on a path that runs on
+	every Contact and every User form render. This resolves any number of
+	records in a fixed ~1 query per source doctype plus 1 for all the
+	Dynamic Links together, so the cost stops scaling with how many
+	doctypes a Contact is linked to. Anything else needing "which addresses
+	does this record have" should call this rather than re-deriving the
+	rule, which is why it's public.
+
+	Confirmed the hard way live that checking the Dynamic Links (not just
+	the primary-address field) is genuinely necessary, not redundant:
+	ERPNext's own native "Address & Contacts" widget (and
 	Customer.link_address_and_contact(), triggered by a Lead/Opportunity/
 	Prospect conversion) Dynamic-Links an Address to a Customer/Supplier
-	without ever touching customer_primary_address/supplier_primary_
-	address themselves - the exact same gap customer_hooks.py's own
-	backfill logic exists to close for the *primary* field, but a
-	Customer can easily have a second, third Address only ever reachable
-	via the Dynamic Link, never promoted to "primary" at all. Checking
-	only the field, as an earlier version of this function did, silently
-	missed every one of those - reported live: a Customer's own Address &
-	Contacts widget clearly showed an Address that this app's own
-	"Linked Addresses" table never surfaced.
+	without ever touching customer_primary_address/supplier_primary_address
+	themselves - the same gap customer_hooks.py's own backfill exists to
+	close for the *primary* field, but a Customer can easily have a second
+	or third Address only ever reachable via the Dynamic Link, never
+	promoted to "primary" at all. An earlier version checked only the
+	field and silently missed every one of those - reported live: a
+	Customer's own Address & Contacts widget clearly showed an Address this
+	app's own "Linked Addresses" table never surfaced.
+
+	Also returns each source record's own display title in the same read,
+	so callers rendering "via Customer: Acme Corp" don't need a second
+	round-trip per address to look it up (address_source_label accepts
+	that title directly).
 
 	Args:
-		doctype: "Customer"/"Supplier"/"Employee"/"Lead"/"User".
-		name: that record's own name.
+		names_by_doctype: {doctype: [record name, ...]} - doctypes should
+			be from _ALL_ADDRESS_SOURCE_DOCTYPES; anything else simply
+			resolves to no addresses.
 
 	Returns:
-		A list of distinct Address names (possibly empty).
+		A 2-tuple (addresses_by_record, titles_by_record), both keyed by
+		(doctype, record name). addresses_by_record values are lists of
+		distinct Address names, primary first where one is set; a record
+		with no addresses is absent from the dict entirely.
 	"""
-	addresses = set()
+	addresses_by_record = {}
+	titles_by_record = {}
+	if not names_by_doctype:
+		return addresses_by_record, titles_by_record
 
-	address_fieldname = _ADDRESS_FIELD_BY_SOURCE_DOCTYPE.get(doctype)
-	if address_fieldname:
-		primary_address = frappe.db.get_value(doctype, name, address_fieldname)
-		if primary_address:
-			addresses.add(primary_address)
+	requested = {
+		(doctype, name) for doctype, names in names_by_doctype.items() for name in names
+	}
 
-	addresses.update(
-		frappe.get_all(
-			"Dynamic Link",
-			filters={"parenttype": "Address", "link_doctype": doctype, "link_name": name},
-			pluck="parent",
-		)
-	)
-	return list(addresses)
+	# One read per source doctype for the primary-address field and the
+	# display title together - two things the old per-record path fetched
+	# in two separate queries, one of them repeated once per address.
+	for doctype, names in names_by_doctype.items():
+		address_fieldname = _ADDRESS_FIELD_BY_SOURCE_DOCTYPE.get(doctype)
+		title_field = _SOURCE_TITLE_FIELD.get(doctype)
+		fields = ["name"] + [f for f in (address_fieldname, title_field) if f]
+		if len(fields) == 1:
+			continue
+		for row in frappe.get_all(
+			doctype, filters={"name": ["in", list(set(names))]}, fields=fields
+		):
+			key = (doctype, row["name"])
+			if address_fieldname and row.get(address_fieldname):
+				addresses_by_record.setdefault(key, []).append(row[address_fieldname])
+			if title_field and row.get(title_field):
+				titles_by_record[key] = row[title_field]
+
+	# One Dynamic Link read covering every source record at once. Filtering
+	# link_doctype and link_name with two independent "in" lists matches
+	# their cross-product, so a Customer and a Lead that happen to share a
+	# name would pick up each other's addresses - hence the explicit
+	# membership check against the pairs actually asked for.
+	for row in frappe.get_all(
+		"Dynamic Link",
+		filters={
+			"parenttype": "Address",
+			"link_doctype": ["in", list(names_by_doctype)],
+			"link_name": ["in", list({name for _dt, name in requested})],
+		},
+		fields=["link_doctype", "link_name", "parent"],
+	):
+		key = (row.link_doctype, row.link_name)
+		if key not in requested:
+			continue
+		existing = addresses_by_record.setdefault(key, [])
+		if row.parent not in existing:
+			existing.append(row.parent)
+
+	return addresses_by_record, titles_by_record
 
 
 def get_all_addresses_for_contact(contact_name, exclude_doctype=None, exclude_name=None):
@@ -286,9 +338,11 @@ def get_all_addresses_for_contact(contact_name, exclude_doctype=None, exclude_na
 
 	Returns:
 		A list of dicts: {"address": ..., "source_doctype": ...,
-		"source_name": ...} - source_doctype/source_name identify which
-		linked record this address came from, for display ("via
-		Customer: Acme Corp").
+		"source_name": ..., "source_title": ...} - source_doctype/
+		source_name identify which linked record this address came from,
+		for display ("via Customer: Acme Corp"), and source_title is that
+		record's own display name, already resolved so the caller doesn't
+		have to look it up again per address.
 	"""
 	links = frappe.get_all(
 		"Dynamic Link",
@@ -296,19 +350,39 @@ def get_all_addresses_for_contact(contact_name, exclude_doctype=None, exclude_na
 		fields=["link_doctype", "link_name"],
 	)
 
+	relevant_links = [
+		link
+		for link in links
+		if link.link_doctype in _ALL_ADDRESS_SOURCE_DOCTYPES
+		and not (link.link_doctype == exclude_doctype and link.link_name == exclude_name)
+	]
+	if not relevant_links:
+		return []
+
+	names_by_doctype = {}
+	for link in relevant_links:
+		names_by_doctype.setdefault(link.link_doctype, []).append(link.link_name)
+
+	addresses_by_record, titles_by_record = addresses_linked_to_many(names_by_doctype)
+
+	# Built by walking relevant_links (not the dicts above) so the output
+	# order still follows the Contact's own link order, exactly as the
+	# per-record version produced it.
 	results = []
 	seen_addresses = set()
-	for link in links:
-		if link.link_doctype == exclude_doctype and link.link_name == exclude_name:
-			continue
-		if link.link_doctype not in _ALL_ADDRESS_SOURCE_DOCTYPES:
-			continue
-		for address_name in _addresses_linked_to(link.link_doctype, link.link_name):
+	for link in relevant_links:
+		key = (link.link_doctype, link.link_name)
+		for address_name in addresses_by_record.get(key, []):
 			if not address_name or address_name in seen_addresses:
 				continue
 			seen_addresses.add(address_name)
 			results.append(
-				{"address": address_name, "source_doctype": link.link_doctype, "source_name": link.link_name}
+				{
+					"address": address_name,
+					"source_doctype": link.link_doctype,
+					"source_name": link.link_name,
+					"source_title": titles_by_record.get(key),
+				}
 			)
 	return results
 
@@ -341,7 +415,9 @@ def address_display_fields():
 	]
 
 
-def address_source_label(source_doctype, source_name, direct_doctype=None, direct_name=None):
+def address_source_label(
+	source_doctype, source_name, direct_doctype=None, direct_name=None, title=None
+):
 	"""A short, human-readable label for one address's own source -
 	shared by both Contact's and User's own "Linked Addresses" rendering
 	so the two sections read consistently.
@@ -354,12 +430,20 @@ def address_source_label(source_doctype, source_name, direct_doctype=None, direc
 			reached via another doctype (e.g. a User looking at an
 			Address it Dynamic-Linked to itself directly) - shown as
 			"Linked directly" instead of "via User: ...".
+		title: the source record's own display title, if the caller
+			already has it - get_all_addresses_for_contact now returns it
+			as "source_title", fetched in the same read as the addresses
+			themselves. Passing it skips the lookup below, which otherwise
+			runs once per address and repeats identically for every
+			address reached via the same record. Looked up here when not
+			provided, so standalone callers still work.
 
 	Returns:
 		"Linked directly", or "via <Doctype>: <title>".
 	"""
 	if source_doctype == direct_doctype and source_name == direct_name:
 		return "Linked directly"
-	title_field = _SOURCE_TITLE_FIELD.get(source_doctype)
-	title = (frappe.db.get_value(source_doctype, source_name, title_field) if title_field else None) or source_name
-	return f"via {source_doctype}: {title}"
+	if not title:
+		title_field = _SOURCE_TITLE_FIELD.get(source_doctype)
+		title = frappe.db.get_value(source_doctype, source_name, title_field) if title_field else None
+	return f"via {source_doctype}: {title or source_name}"

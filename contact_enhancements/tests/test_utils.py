@@ -255,6 +255,85 @@ class TestResolveAddressFromContactLinks(FrappeTestCase):
 		self.assertIsNone(resolve_address_from_contact_links(contact.name))
 
 
+class TestGetAllAddressesForContactQueryCount(FrappeTestCase):
+	"""This runs on every Contact and every User form render, so its cost
+	must not grow with how many records a Contact is linked to. It used to
+	issue 2 queries per linked record (a primary-address read and a Dynamic
+	Link read), plus one more per address to label its source."""
+
+	def _count_reads(self, contact_name):
+		reads = []
+		original_get_all = frappe.get_all
+		original_get_value = frappe.db.get_value
+
+		def counting_get_all(*args, **kwargs):
+			reads.append(("get_all",) + args[:1])
+			return original_get_all(*args, **kwargs)
+
+		def counting_get_value(*args, **kwargs):
+			reads.append(("get_value",) + args[:1])
+			return original_get_value(*args, **kwargs)
+
+		frappe.get_all = counting_get_all
+		frappe.db.get_value = counting_get_value
+		try:
+			get_all_addresses_for_contact(contact_name)
+		finally:
+			frappe.get_all = original_get_all
+			frappe.db.get_value = original_get_value
+		return reads
+
+	def test_cost_does_not_grow_with_more_records_of_the_same_doctype(self):
+		# Two Customers sharing one Contact must cost the same as one:
+		# the per-doctype read is batched with a "name in (...)" filter.
+		contact = make_contact()
+		for _ in range(2):
+			make_customer(
+				customer_primary_contact=contact.name, customer_primary_address=make_address().name
+			)
+		two_customers = len(self._count_reads(contact.name))
+
+		contact_one = make_contact()
+		make_customer(
+			customer_primary_contact=contact_one.name, customer_primary_address=make_address().name
+		)
+		one_customer = len(self._count_reads(contact_one.name))
+
+		self.assertEqual(two_customers, one_customer)
+
+	def test_stays_within_a_small_fixed_number_of_reads(self):
+		# One read for the Contact's links, one per source doctype, and
+		# one covering every Dynamic Link at once - no per-record or
+		# per-address reads, including for the source labels.
+		contact = make_contact()
+		make_customer(customer_primary_contact=contact.name, customer_primary_address=make_address().name)
+
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		make_supplier(
+			supplier_primary_contact=contact.name, supplier_primary_address=make_address().name
+		)
+
+		reads = self._count_reads(contact.name)
+		self.assertLessEqual(len(reads), 4, f"expected <= 4 reads, got: {reads}")
+
+	def test_returns_the_source_title_so_labelling_needs_no_extra_query(self):
+		contact = make_contact()
+		customer = make_customer(
+			customer_name="Title Carrying Customer",
+			customer_primary_contact=contact.name,
+			customer_primary_address=make_address().name,
+		)
+
+		rows = get_all_addresses_for_contact(contact.name)
+		self.assertEqual([row["source_title"] for row in rows], ["Title Carrying Customer"])
+		# and the label uses it without going back to the database
+		self.assertEqual(
+			address_source_label("Customer", customer.name, title=rows[0]["source_title"]),
+			"via Customer: Title Carrying Customer",
+		)
+
+
 class TestGetAllAddressesForContact(FrappeTestCase):
 	def test_returns_empty_list_when_contact_has_no_links(self):
 		contact = make_contact()
