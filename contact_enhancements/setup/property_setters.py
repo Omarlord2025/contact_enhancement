@@ -213,6 +213,48 @@ def create_contact_dedupe_index_property_setters():
 	frappe.db.updatedb("Contact Phone")
 
 
+def create_primary_contact_fan_out_indexes():
+	"""Index every "primary contact" field contact_hooks.
+	propagate_contact_changes_to_linked_doctypes fans out across, so that
+	hook's own lookup is an indexed read rather than a table scan.
+
+	That hook runs on every Contact save whose full_name/email_id/mobile_no
+	changed, and asks each target doctype "which of your records point at
+	this Contact?" - one frappe.get_all filtered on that doctype's own
+	primary-contact field. Only Customer's was indexed (by
+	create_contact_enhancements_index_property_setters, for a different
+	reason), so Supplier, Employee and User were each scanned in full every
+	time. tabUser and tabEmployee are precisely the tables you don't want
+	scanned on a hot write path.
+
+	Employee's and User's fields are this app's own Custom Fields, so they
+	carry "search_index": 1 in setup/custom_fields.py directly - the
+	natural home for a property of a field this app defines. Only
+	Supplier's is a native ERPNext field, so only it needs a Property
+	Setter here.
+
+	Same frappe.db.updatedb() requirement as every other schema-affecting
+	Property Setter in this app - setting the property (or the Custom
+	Field flag) alone does not alter the table (see
+	create_contact_enhancements_index_property_setters's own docstring for
+	the full mechanism). All three doctypes are updated here, not just
+	Supplier, because the two Custom Field flags need the same ALTER TABLE
+	pass and nothing else triggers one for them.
+	"""
+	frappe.make_property_setter(
+		{
+			"doctype": "Supplier",
+			"fieldname": "supplier_primary_contact",
+			"property": "search_index",
+			"value": "1",
+			"property_type": "Check",
+		}
+	)
+	frappe.db.updatedb("Supplier")
+	frappe.db.updatedb("Employee")
+	frappe.db.updatedb("User")
+
+
 def create_contact_full_name_property_setters():
 	"""Relabel Contact.first_name to "Full Name" (Phase 0e) - the practical
 	pattern already in use everywhere a Contact gets created through this

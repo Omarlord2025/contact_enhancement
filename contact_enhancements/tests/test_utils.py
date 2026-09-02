@@ -86,6 +86,50 @@ class TestEnsureContactLinkedToParent(FrappeTestCase):
 		contact.reload()
 		self.assertEqual(len(contact.get("links", [])), link_count_before)
 
+	def test_does_not_load_the_contact_at_all_when_already_linked(self):
+		# The steady state for this hook: it runs unconditionally on every
+		# Customer/Supplier/Employee/User save, and the link is almost
+		# always already there. Loading the Contact just to reach
+		# has_link() costs 4 SELECTs (parent + phone_nos + email_ids +
+		# links) to answer a question one indexed Dynamic Link read
+		# answers - so in this path it must not load the document at all.
+		contact = make_contact()
+		customer = make_customer(customer_primary_contact=contact.name)
+		ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+
+		# Same for_update exclusion as the test below - see its comment.
+		load_calls = []
+		original_get_doc = frappe.get_doc
+
+		def counting_get_doc(*args, **kwargs):
+			if args[:2] == ("Contact", contact.name) and not kwargs.get("for_update"):
+				load_calls.append(args)
+			return original_get_doc(*args, **kwargs)
+
+		frappe.get_doc = counting_get_doc
+		try:
+			result = ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+		finally:
+			frappe.get_doc = original_get_doc
+
+		self.assertEqual(load_calls, [])
+		self.assertIsNone(result)
+
+	def test_still_links_when_the_probe_finds_nothing(self):
+		# The other side of the probe: a genuinely unlinked Contact must
+		# still be loaded and linked, exactly as before.
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+
+		ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+
+		contact.reload()
+		self.assertTrue(contact.has_link("Customer", customer.name))
+
 	def test_reuses_a_passed_in_contact_without_reloading(self):
 		# customer_primary_contact is set via a raw frappe.db.set_value,
 		# bypassing Customer's own on_update hook (which would otherwise

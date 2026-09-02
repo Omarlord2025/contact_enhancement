@@ -500,11 +500,18 @@ class TestLinkPrimaryContact(FrappeTestCase):
 		contact.reload()
 		self.assertTrue(contact.has_link("Customer", customer.name))
 
-	def test_link_primary_contact_loads_the_contact_only_once(self):
-		# link_primary_contact used to have _ensure_contact_linked_to_customer
-		# and _sync_whatsapp_to_customer_contact each independently load
-		# their own copy of the same Contact - this proves it's now loaded
-		# exactly once and passed through instead.
+	def test_link_primary_contact_does_not_reload_an_already_linked_contact(self):
+		# History of this assertion: originally
+		# _ensure_contact_linked_to_customer and
+		# _sync_whatsapp_to_customer_contact each loaded their own copy of
+		# the same Contact (2 loads); that was cut to 1 by loading once and
+		# passing it through. It is now 0, because
+		# ensure_doc_linked_to_parent answers "is it already linked?" with
+		# one indexed Dynamic Link read instead of loading the whole
+		# Contact (4 SELECTs) just to call has_link() - and on this
+		# already-saved Customer the link is of course already there.
+		# The WhatsApp sync itself is covered by
+		# test_syncs_whatsapp_number_via_hook, not by this test.
 		lead = make_lead(company_name="Acme Corp", whatsapp_no="01077788899")
 		contact_name = lead_contact_name(lead.name)
 		customer = make_customer(customer_name="Acme Corp Existing", customer_primary_contact=contact_name)
@@ -525,8 +532,9 @@ class TestLinkPrimaryContact(FrappeTestCase):
 		finally:
 			frappe.get_doc = original_get_doc
 
-		self.assertEqual(len(load_calls), 1)
-		# and the WhatsApp sync still actually ran with that one load
+		self.assertEqual(len(load_calls), 0)
+		# The WhatsApp number is still on the Contact (synced by the
+		# customer.save() above, which ran the same hook for real).
 		contact = frappe.get_doc("Contact", contact_name)
 		matches = [row for row in contact.phone_nos if row.phone == "+201077788899"]
 		self.assertEqual(len(matches), 1)

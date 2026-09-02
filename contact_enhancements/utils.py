@@ -66,16 +66,39 @@ def ensure_doc_linked_to_parent(parent_doc, fieldname, linked_doctype, linked_do
 			still works called standalone.
 
 	Returns:
-		The document used (whether passed in or loaded here), or None if
-		parent_doc's own fieldname is blank - so callers that already
-		paid for this load can reuse it too.
+		The document used, if one was passed in or had to be loaded to
+		add a missing link - otherwise None. None therefore means either
+		"nothing to link" (fieldname blank) or "already linked, so no
+		document needed loading"; both mean the caller has nothing to
+		reuse, and every caller that wants the document in that case
+		loads it on demand anyway.
 	"""
 	linked_name = parent_doc.get(fieldname)
 	if not linked_name:
 		return None
 
 	if linked_doc is None:
+		# Probe with one indexed single-row read before paying for a full
+		# document load. This hook is unconditional - it runs on every
+		# save of Customer/Supplier/Employee/User - and by far the most
+		# common outcome is "the link is already there, do nothing". In
+		# that case loading the document is pure waste: a Contact costs 4
+		# SELECTs (parent + phone_nos + email_ids + links) purely to reach
+		# has_link(), which is only an in-memory loop over self.links.
+		# The filter is keyed on parent, which child tables are always
+		# indexed on, so the probe itself is cheap.
+		if dynamic_link_lookup(
+			{
+				"parenttype": linked_doctype,
+				"parent": linked_name,
+				"link_doctype": parent_doc.doctype,
+				"link_name": parent_doc.name,
+			},
+			"name",
+		):
+			return None
 		linked_doc = frappe.get_doc(linked_doctype, linked_name)
+
 	if not linked_doc.has_link(parent_doc.doctype, parent_doc.name):
 		linked_doc.append("links", {"link_doctype": parent_doc.doctype, "link_name": parent_doc.name})
 		linked_doc.save(ignore_permissions=parent_doc.flags.ignore_permissions)
@@ -92,7 +115,9 @@ def ensure_contact_linked_to_parent(parent_doc, primary_contact_fieldname, conta
 	that function's own fieldname, contact is its own linked_doc.
 
 	Returns:
-		The Contact document used, or None if blank.
+		The Contact document, or None - see ensure_doc_linked_to_parent
+		for exactly when each happens (None also covers "already linked,
+		so nothing needed loading").
 	"""
 	return ensure_doc_linked_to_parent(parent_doc, primary_contact_fieldname, "Contact", linked_doc=contact)
 

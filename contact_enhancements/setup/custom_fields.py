@@ -119,6 +119,11 @@ CONTACT_ENHANCEMENTS_CUSTOM_FIELDS = {
 			"label": "Employee Primary Contact",
 			"insert_after": "employee_primary_address_column_break",
 			"description": "Reselect, if the chosen contact is edited after save",
+			# contact_hooks.propagate_contact_changes_to_linked_doctypes
+			# filters Employee on this field on every Contact save whose
+			# name/email/phone changed - unindexed, that is a full scan of
+			# tabEmployee. See patches/add_primary_contact_fan_out_indexes.
+			"search_index": 1,
 		},
 	],
 	"User": [
@@ -135,6 +140,9 @@ CONTACT_ENHANCEMENTS_CUSTOM_FIELDS = {
 			"label": "User Primary Contact",
 			"insert_after": "user_contact_section",
 			"description": "Set via the onboarding dialog shown when creating a new User.",
+			# Same fan-out lookup as employee_primary_contact above - see
+			# that field's own comment.
+			"search_index": 1,
 		},
 		{
 			"fieldname": "linked_addresses_section",

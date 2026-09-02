@@ -297,7 +297,15 @@ def _phonenumbers_region_for_country(country):
 	if not country:
 		frappe.throw(_("Select a Country before entering a phone number."))
 
-	code = frappe.db.get_value("Country", country, "code")
+	# Cached, not frappe.db.get_value: this runs once per phone row per
+	# save, and in practice every row on a Contact carries the same
+	# country - so an uncached read re-fetches the identical static
+	# reference row N times per save. frappe.get_cached_value returns None
+	# for a missing record exactly like frappe.db.get_value does (it
+	# swallows DoesNotExistError), so the blank-code throw below is
+	# unaffected, and Frappe invalidates this cache itself whenever the
+	# Country record is saved.
+	code = frappe.get_cached_value("Country", country, "code")
 	if not code:
 		frappe.throw(
 			_("{0} has no phone dialing code configured - fix its Country record first.").format(country)
@@ -406,7 +414,42 @@ def _detect_phone_country(phone):
 		return None
 
 	region = phonenumbers.region_code_for_number(parsed)
-	return frappe.db.get_value("Country", {"code": region.lower()}, "name") if region else None
+	return _country_for_region_code(region)
+
+
+def _country_for_region_code(region):
+	"""Country record name for a phonenumbers region code ("EG" -> "Egypt"),
+	memoized for the life of the request.
+
+	Country.code carries no index, so this lookup is a scan of tabCountry,
+	and _detect_phone_country calls it once per phone row on every Contact
+	save - with every row on a Contact almost always resolving to the same
+	country, so the identical scan is repeated N times per save for one
+	distinct answer.
+
+	Request-scoped rather than frappe.cache()/get_cached_value: this is a
+	reverse lookup by a *field value*, not by docname, so Frappe's own
+	document cache can't key it and wouldn't be invalidated if a Country's
+	code were ever edited. A per-request memo removes the repetition
+	within a save - which is the entire cost here - and cannot go stale.
+
+	Args:
+		region: two-letter ISO region code from phonenumbers, or None.
+
+	Returns:
+		Name of the matching Country record, or None.
+	"""
+	if not region:
+		return None
+
+	code = region.lower()
+	cache = getattr(frappe.local, "contact_enhancements_country_by_code", None)
+	if cache is None:
+		cache = {}
+		frappe.local.contact_enhancements_country_by_code = cache
+	if code not in cache:
+		cache[code] = frappe.db.get_value("Country", {"code": code}, "name")
+	return cache[code]
 
 
 def normalize_and_validate_contact_phone(phone, country, is_landline=False):
@@ -890,11 +933,10 @@ def propagate_contact_changes_to_linked_doctypes(doc, method=None):
 			continue
 
 		for record_name in record_names:
-			for fieldname, value in updates.items():
-				_set_value_without_crashing_the_save(doctype, record_name, fieldname, value)
+			_set_values_without_crashing_the_save(doctype, record_name, updates)
 
 
-def _set_value_without_crashing_the_save(doctype, record_name, fieldname, value):
+def _set_values_without_crashing_the_save(doctype, record_name, updates):
 	"""frappe.db.set_value, but a failure here can never take down the
 	Contact save that triggered it - confirmed the hard way in production:
 	tabUser.mobile_no carries a native UNIQUE index (frappe/core/doctype/
@@ -932,21 +974,78 @@ def _set_value_without_crashing_the_save(doctype, record_name, fieldname, value)
 	here is "never raise", not "never raise for the specific case already
 	found once".
 
+	Writes every field for one record in a single statement inside a
+	single savepoint, rather than a savepoint plus an UPDATE per field:
+	for a Contact that is the primary contact of a Customer, a Supplier,
+	an Employee and a User with all three fields changed, that is 4
+	savepoints and 4 UPDATEs instead of 11 and 11.
+
+	On failure it retries the same record field by field, so the batching
+	never costs granularity: the known production case (a Contact that is
+	the primary contact for two Users, whose second mobile_no write hits
+	tabUser.mobile_no's native UNIQUE index) must still apply that User's
+	*other* fields and skip only the colliding one. Batching alone would
+	have rolled back the whole record's update, silently syncing less than
+	before - so the fast path is batched and the rare failure path keeps
+	the original per-field isolation.
+
 	Args:
-		doctype, record_name, fieldname, value: the same arguments
-			frappe.db.set_value itself takes.
+		doctype: the target doctype.
+		record_name: the target record's name.
+		updates: {fieldname: value} to apply to that one record.
+	"""
+	if not updates:
+		return
+
+	if _try_set_values(doctype, record_name, updates):
+		return
+
+	if len(updates) == 1:
+		# Already as granular as it gets - a retry would just fail again.
+		_log_failed_propagation(doctype, record_name, updates)
+		return
+
+	for fieldname, value in updates.items():
+		if not _try_set_values(doctype, record_name, {fieldname: value}):
+			_log_failed_propagation(doctype, record_name, {fieldname: value})
+
+
+def _try_set_values(doctype, record_name, updates):
+	"""One savepoint-guarded frappe.db.set_value. Returns True if it
+	applied, False if it failed and was rolled back to the savepoint
+	(leaving the surrounding transaction, including the Contact's own
+	save, untouched).
+
+	Args:
+		doctype, record_name, updates: see
+			_set_values_without_crashing_the_save.
+
+	Returns:
+		True on success, False if the write failed and was rolled back.
 	"""
 	savepoint_name = "contact_enhancements_propagate_" + frappe.generate_hash(length=8)
 	frappe.db.savepoint(savepoint_name)
 	try:
-		frappe.db.set_value(doctype, record_name, fieldname, value, update_modified=False)
+		frappe.db.set_value(doctype, record_name, updates, update_modified=False)
 	except Exception:
 		frappe.db.rollback(save_point=savepoint_name)
-		frappe.log_error(
-			title="contact_enhancements: could not propagate Contact change",
-			message=(
-				f"Tried to set {doctype} {record_name}.{fieldname} = {value!r} while "
-				"propagating a Contact's own name/email/phone change - skipped, likely "
-				"a conflicting unique value on the target field."
-			),
-		)
+		return False
+	return True
+
+
+def _log_failed_propagation(doctype, record_name, updates):
+	"""Record a propagation write that could not be applied, without
+	raising - see _set_values_without_crashing_the_save for why this can
+	never be allowed to interrupt the Contact save that triggered it.
+
+	Args:
+		doctype, record_name, updates: the write that failed.
+	"""
+	frappe.log_error(
+		title="contact_enhancements: could not propagate Contact change",
+		message=(
+			f"Tried to set {doctype} {record_name} {updates!r} while "
+			"propagating a Contact's own name/email/phone change - skipped, likely "
+			"a conflicting unique value on the target field."
+		),
+	)

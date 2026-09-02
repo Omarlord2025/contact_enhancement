@@ -44,6 +44,11 @@ contact_enhancements.patches.disable_user_quick_entry
 # on its own rather than needing a human decision first like the
 # cross-Contact case does.
 contact_enhancements.patches.dedupe_contact_phone_rows_within_contact
+# add_primary_contact_fan_out_indexes has no dependency on the phone-
+# uniqueness chain either - placed before add_contact_phone_unique_mobile_
+# index for the same reason as the patches above it, so it isn't blocked
+# by that patch's own expected abort.
+contact_enhancements.patches.add_primary_contact_fan_out_indexes
 # add_contact_phone_unique_mobile_index aborts loudly (pointing back at the
 # report above, or at find_duplicate_phone_rows_within_contact) if any
 # duplicate remains unresolved - see that patch's own docstring. Expected

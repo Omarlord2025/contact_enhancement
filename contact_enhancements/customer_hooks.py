@@ -256,9 +256,11 @@ def _ensure_contact_linked_to_customer(customer, contact=None):
 			why. Loaded here if not provided.
 
 	Returns:
-		The Contact document used (whether passed in or loaded here), or
-		None if this Customer has no primary contact - so callers that
-		already paid for this load can reuse it too.
+		The Contact document, if one was passed in or had to be loaded to
+		add a missing link - otherwise None (this Customer has no primary
+		contact, or it was already linked and nothing needed loading).
+		_sync_whatsapp_to_customer_contact, the one consumer of this
+		return value, already loads the Contact itself when passed None.
 	"""
 	return ensure_contact_linked_to_parent(customer, "customer_primary_contact", contact=contact)
 

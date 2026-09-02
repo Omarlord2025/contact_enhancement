@@ -12,6 +12,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.contact_hooks import (
+	_country_for_region_code,
 	_detect_phone_country,
 	_enforce_landline_exclusivity,
 	_national_digits,
@@ -251,6 +252,49 @@ class TestDetectPhoneCountry(FrappeTestCase):
 	def test_returns_none_for_blank(self):
 		self.assertIsNone(_detect_phone_country(""))
 		self.assertIsNone(_detect_phone_country(None))
+
+
+class TestCountryForRegionCode(FrappeTestCase):
+	"""Country.code carries no index, so this reverse lookup scans
+	tabCountry - and it runs once per phone row on every Contact save,
+	with every row almost always resolving to the same country."""
+
+	def setUp(self):
+		# Each test starts from a cold cache - it lives on frappe.local,
+		# which persists across tests within one run.
+		frappe.local.contact_enhancements_country_by_code = None
+
+	def test_resolves_a_region_code_to_its_country(self):
+		self.assertEqual(_country_for_region_code("EG"), "Egypt")
+
+	def test_is_case_insensitive(self):
+		self.assertEqual(_country_for_region_code("eg"), "Egypt")
+
+	def test_returns_none_for_a_blank_region(self):
+		self.assertIsNone(_country_for_region_code(None))
+		self.assertIsNone(_country_for_region_code(""))
+
+	def test_queries_once_per_distinct_region_not_once_per_call(self):
+		with patch.object(
+			frappe.db, "get_value", wraps=frappe.db.get_value
+		) as spy:
+			for _ in range(5):
+				_country_for_region_code("EG")
+
+		country_lookups = [c for c in spy.call_args_list if c.args and c.args[0] == "Country"]
+		self.assertEqual(len(country_lookups), 1)
+
+	def test_caches_a_negative_result_too(self):
+		# A region with no Country record must not be re-queried on every
+		# row either - the miss is as repeatable as the hit.
+		with patch.object(
+			frappe.db, "get_value", wraps=frappe.db.get_value
+		) as spy:
+			for _ in range(3):
+				self.assertIsNone(_country_for_region_code("ZZ"))
+
+		country_lookups = [c for c in spy.call_args_list if c.args and c.args[0] == "Country"]
+		self.assertEqual(len(country_lookups), 1)
 
 
 class TestNormalizeAndValidateContactPhones(FrappeTestCase):
@@ -905,3 +949,30 @@ class TestPropagateContactChangesToLinkedDoctypes(FrappeTestCase):
 		}
 		self.assertIn("+201099844444", mobile_nos)
 		self.assertEqual(len(mobile_nos), 2)  # still distinct - no corruption
+
+	def test_a_colliding_field_does_not_block_the_other_fields_on_the_same_record(self):
+		# Writes for one record are batched into a single statement, so a
+		# collision on one field would roll back that record's whole
+		# update unless the failure path retries field by field. Same
+		# two-Users-one-Contact setup as above (tabUser.mobile_no is
+		# UNIQUE), but the name changes in the same save: whichever User
+		# loses the mobile_no race must still get the new first_name.
+		from contact_enhancements.tests.test_user_hooks import make_user
+
+		contact = make_contact()
+		contact.append("phone_nos", {"phone": "01099855111", "is_primary_mobile_no": 1})
+		contact.save(ignore_permissions=True)
+		user1 = make_user(user_primary_contact=contact.name, mobile_no="01099855222")
+		user2 = make_user(user_primary_contact=contact.name, mobile_no="01099855333")
+		contact.reload()
+
+		contact.first_name = "Batched Fallback Person"
+		contact.phone_nos[0].phone = "01099855444"
+		contact.save(ignore_permissions=True)
+
+		first_names = [
+			frappe.db.get_value("User", user1.name, "first_name"),
+			frappe.db.get_value("User", user2.name, "first_name"),
+		]
+		# Both, not just the one whose mobile_no write happened to succeed.
+		self.assertEqual(first_names, ["Batched Fallback Person", "Batched Fallback Person"])
