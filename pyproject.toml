@@ -9,6 +9,7 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
+    "phonenumbers", # per-country phone validation, contact_hooks.py
 ]
 
 [build-system]

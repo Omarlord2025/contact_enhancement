@@ -26,7 +26,15 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/contact_enhancements/css/contact_enhancements.css"
-# app_include_js = "/assets/contact_enhancements/js/contact_enhancements.js"
+# contact_picker_dialog.js / linked_addresses.js are shared components
+# more than one doctype's own doctype_js needs (Customer, Supplier,
+# Contact, User, ...) - doctype_js only binds one file to one doctype, so
+# these have to be genuine app_include_js entries instead, loaded on
+# every Desk page.
+app_include_js = [
+	"/assets/contact_enhancements/js/contact_picker_dialog.js",
+	"/assets/contact_enhancements/js/linked_addresses.js",
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/contact_enhancements/css/contact_enhancements.css"
@@ -43,7 +51,13 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+	"Customer": "public/js/customer.js",
+	"Contact": "public/js/contact.js",
+	"Supplier": "public/js/supplier.js",
+	"Employee": "public/js/employee.js",
+	"User": "public/js/user.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -83,7 +97,7 @@ app_license = "mit"
 # ------------
 
 # before_install = "contact_enhancements.install.before_install"
-# after_install = "contact_enhancements.install.after_install"
+after_install = "contact_enhancements.install.after_install"
 
 # Uninstallation
 # ------------
@@ -137,13 +151,44 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Customer": {
+		"validate": "contact_enhancements.customer_hooks.sync_customer_from_primary_contact",
+		"on_update": "contact_enhancements.customer_hooks.link_primary_contact",
+	},
+	"Supplier": {
+		"validate": [
+			"contact_enhancements.supplier_hooks.backfill_supplier_primary_contact_from_dynamic_link",
+			"contact_enhancements.supplier_hooks.sync_supplier_address_from_contact_links",
+		],
+		"on_update": "contact_enhancements.supplier_hooks.link_primary_contact",
+	},
+	"Employee": {
+		"validate": [
+			"contact_enhancements.employee_hooks.sync_employee_contact_from_user",
+			"contact_enhancements.employee_hooks.sync_employee_address_from_contact_links",
+			"contact_enhancements.employee_hooks.enforce_full_name_has_at_least_three_words",
+		],
+		"on_update": "contact_enhancements.employee_hooks.link_employee_contact",
+	},
+	"Lead": {
+		"on_update": "contact_enhancements.lead_hooks.sync_lead_address_from_contact_links",
+	},
+	"Contact": {
+		"validate": [
+			"contact_enhancements.contact_hooks.normalize_contact_first_name",
+			"contact_enhancements.contact_hooks.enforce_contact_phone_channel_exclusivity",
+			"contact_enhancements.contact_hooks.normalize_and_validate_contact_phones",
+			"contact_enhancements.contact_hooks.enforce_unique_mobile_number",
+			"contact_enhancements.api.contact_dedupe.warn_if_duplicate_contact",
+		],
+		"on_update": "contact_enhancements.contact_hooks.propagate_contact_changes_to_linked_doctypes",
+	},
+	"User": {
+		"validate": "contact_enhancements.user_hooks.validate_user_phone_before_contact_sync",
+		"on_update": "contact_enhancements.user_hooks.link_user_contact",
+	},
+}
 
 # Scheduled Tasks
 # ---------------

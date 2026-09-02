@@ -1,6 +1,52 @@
 [pre_model_sync]
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
+# add_contact_enhancements_indexes: property_setters.py's
+# create_contact_enhancements_index_property_setters() calls
+# frappe.db.updatedb("Customer") itself to build the index immediately -
+# see that function's docstring for why sync_all()'s own DocType-JSON-hash
+# gating would otherwise silently skip it. Placed in pre_model_sync (not
+# post_model_sync, unlike the other patches below) simply so schema-shaped
+# work runs before the main doctype sync pass, on general principle.
+contact_enhancements.patches.add_contact_enhancements_indexes
+contact_enhancements.patches.add_contact_dedupe_indexes
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+contact_enhancements.patches.add_contact_phone_channel_fields
+contact_enhancements.patches.make_customer_primary_contact_mandatory
+contact_enhancements.patches.move_country_to_contact_phone
+# renormalize_contact_phones_to_e164 must run before any patch that groups
+# or indexes Contact Phone.phone by its normalized value (see Phase 0c/0d
+# in the approved plan) - grouping has to happen on the final canonical
+# format, not the pre-conversion local form.
+contact_enhancements.patches.renormalize_contact_phones_to_e164
+# backfill_contact_phone_national depends on renormalize_contact_phones_to_e164
+# for the same reason - it derives custom_phone_national from each row's
+# already-E.164 phone value. Also has no dependency on (and isn't blocked
+# by) the phone-uniqueness chain below.
+contact_enhancements.patches.backfill_contact_phone_national
+contact_enhancements.patches.report_duplicate_mobile_contacts
+# relabel_contact_first_name and hide_contact_phone_is_primary_phone have
+# no dependency on the phone-uniqueness chain - deliberately placed before
+# add_contact_phone_unique_mobile_index so neither is blocked by that
+# patch's own expected abort below.
+contact_enhancements.patches.relabel_contact_first_name
+contact_enhancements.patches.hide_contact_phone_is_primary_phone
+# Phase 1 - also has no dependency on the phone-uniqueness chain below.
+contact_enhancements.patches.make_supplier_primary_contact_mandatory
+# Phase 3 - also has no dependency on the phone-uniqueness chain below.
+contact_enhancements.patches.relabel_employee_first_name
+contact_enhancements.patches.disable_user_quick_entry
+# dedupe_contact_phone_rows_within_contact fixes a different failure mode
+# from the cross-Contact one above (same number entered twice on one
+# Contact) - safe to automate (see that patch's own docstring), so it runs
+# on its own rather than needing a human decision first like the
+# cross-Contact case does.
+contact_enhancements.patches.dedupe_contact_phone_rows_within_contact
+# add_contact_phone_unique_mobile_index aborts loudly (pointing back at the
+# report above, or at find_duplicate_phone_rows_within_contact) if any
+# duplicate remains unresolved - see that patch's own docstring. Expected
+# to legitimately fail bench migrate until every reported group is
+# resolved.
+contact_enhancements.patches.add_contact_phone_unique_mobile_index
