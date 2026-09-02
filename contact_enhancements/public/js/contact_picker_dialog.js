@@ -245,24 +245,38 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 				})
 				.join("")
 		);
-		$results.find(".select-contact-btn").on("click", function () {
-			if (!extra_fields_are_valid(get_values_ignoring_missing())) return;
-			finish($(this).attr("data-name"));
-		});
 	}
+
+	// One delegated handler, bound once, instead of re-binding one per
+	// result row on every keystroke-driven search (up to 10 each time).
+	// Delegation also survives $results.html(...) replacing the rows.
+	dialog.fields_dict.results.$wrapper.on("click", ".select-contact-btn", function () {
+		if (!extra_fields_are_valid(get_values_ignoring_missing())) return;
+		finish($(this).attr("data-name"));
+	});
+
+	// Monotonic token so a slow response for an earlier query can't paint
+	// over the results of a later one. Searches are 300ms apart at most,
+	// and response times vary with how much of the Contact/Contact Phone
+	// join a given query has to scan, so overtaking is realistic.
+	let latest_search = 0;
 
 	const search = frappe.utils.debounce((txt) => {
 		if (!txt || txt.length < 3) {
+			latest_search++; // cancel any in-flight response
 			dialog.fields_dict.results.$wrapper.empty();
 			return;
 		}
+		const search_id = ++latest_search;
 		frappe.call({
 			method: "contact_enhancements.api.contact_lookup.search_contacts_with_details",
 			args: { txt, start: 0, page_len: 10 },
 			callback(r) {
+				if (search_id !== latest_search) return; // superseded
 				render_results(r.message || []);
 			},
 			error() {
+				if (search_id !== latest_search) return; // superseded
 				// An inline message in the results area, not a msgprint -
 				// this fires on every failed keystroke-driven search while
 				// e.g. connectivity is flaky, and a modal dialog popping up

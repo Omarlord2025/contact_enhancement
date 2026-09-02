@@ -62,14 +62,34 @@ frappe.ui.form.on("Contact", {
 		if (frm.is_new()) return;
 		const field = frm.get_field("linked_addresses_html");
 		if (!field) return;
-		contact_enhancements.render_linked_addresses(field, {
+
+		// Reuse the existing component and just re-fetch in place.
+		// refresh() fires on load, on every save and on every route back
+		// to the form; rebuilding each time emptied the section and
+		// repainted "Loading..." over rows that were already correct.
+		const existing = frm.__ce_linked_addresses;
+		if (existing && $.contains(document, existing.wrapper)) {
+			existing.handle.refresh();
+			return;
+		}
+
+		const handle = contact_enhancements.render_linked_addresses(field, {
 			fetch: () =>
-				frappe.call({
-					method: "contact_enhancements.api.contact_lookup.get_addresses_for_contact",
-					args: { contact: frm.doc.name },
-				}).then((r) => r.message),
+				frappe
+					.call({
+						method: "contact_enhancements.api.contact_lookup.get_addresses_for_contact",
+						args: { contact: frm.doc.name },
+					})
+					.then((r) => {
+						// frappe.call resolves with exc set instead of
+						// rejecting, so let the component's own error
+						// state actually trigger.
+						if (r.exc) throw new Error(r.exc);
+						return r.message;
+					}),
 			empty_message: __("No addresses linked to this Contact yet - via any Customer, Supplier, Employee, Lead, or User."),
 		});
+		frm.__ce_linked_addresses = { handle, wrapper: field.$wrapper[0] };
 	},
 });
 

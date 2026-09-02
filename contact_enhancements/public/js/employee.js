@@ -29,11 +29,16 @@ frappe.ui.form.on("Employee", {
 		// dialog's own search, the native Link dropdown directly, or
 		// creating a new one), not just the dialog's create-new path.
 		if (frm.doc.employee_primary_contact && !frm.doc.first_name) {
-			frappe.db.get_value("Contact", frm.doc.employee_primary_contact, "full_name").then(({ message }) => {
-				if (message && message.full_name && !frm.doc.first_name) {
-					frm.set_value("first_name", message.full_name);
-				}
-			});
+			frappe.db
+				.get_value("Contact", frm.doc.employee_primary_contact, "full_name")
+				.then(({ message }) => {
+					if (message && message.full_name && !frm.doc.first_name) {
+						frm.set_value("first_name", message.full_name);
+					}
+				})
+				// A convenience prefill into an editable field - stay quiet
+				// on failure, but don't leave the rejection unhandled.
+				.catch(() => {});
 		}
 
 		apply_address_fallback(frm);
@@ -48,10 +53,19 @@ async function apply_address_fallback(frm) {
 	// their own address fields.
 	if (!frm.doc.employee_primary_contact || frm.doc.employee_primary_address) return;
 
-	const r = await frappe.call({
-		method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
-		args: { contact: frm.doc.employee_primary_contact, exclude_doctype: "Employee", exclude_name: frm.doc.name },
-	});
+	// employee_primary_address is optional, so a failed lookup is a missed
+	// convenience rather than a blocked save - quiet, but handled.
+	// frappe.call resolves with exc set instead of rejecting, so check both.
+	let r;
+	try {
+		r = await frappe.call({
+			method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
+			args: { contact: frm.doc.employee_primary_contact, exclude_doctype: "Employee", exclude_name: frm.doc.name },
+		});
+	} catch (e) {
+		return;
+	}
+	if (!r || r.exc) return;
 	if (r.message && !frm.doc.employee_primary_address) {
 		await frm.set_value("employee_primary_address", r.message);
 	}

@@ -211,10 +211,30 @@ async function apply_address_fallback(frm) {
 	// field is still blank at that moment (contact_enhancements/CLAUDE.md).
 	if (frm.doc.customer_primary_address) return;
 
-	const r = await frappe.call({
-		method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
-		args: { contact: frm.doc.customer_primary_contact },
-	});
+	// This runs on the non-cancelable mandatory-contact dialog's own flow,
+	// and customer_primary_address is reqd - so a silent failure here
+	// leaves the user stuck at Save with a blank mandatory field, no
+	// message, and (the dialog being no_cancel) no way out. Tell them
+	// instead, so they know to pick an address themselves.
+	// Note frappe.call resolves with exc set rather than rejecting, so
+	// both that and a genuine transport rejection have to be handled.
+	let r;
+	try {
+		r = await frappe.call({
+			method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
+			args: { contact: frm.doc.customer_primary_contact },
+		});
+	} catch (e) {
+		r = null;
+	}
+	if (!r || r.exc) {
+		frappe.msgprint({
+			title: __("Could not look up an address"),
+			message: __("Pick a Customer Primary Address manually before saving."),
+			indicator: "orange",
+		});
+		return;
+	}
 	if (r.message && !frm.doc.customer_primary_address) {
 		await frm.set_value("customer_primary_address", r.message);
 	}

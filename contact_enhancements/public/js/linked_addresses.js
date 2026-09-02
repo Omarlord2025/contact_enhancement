@@ -41,16 +41,36 @@ contact_enhancements.render_linked_addresses = function (field, opts) {
 			.on("click", opts.on_add);
 	}
 
+	// Guards against an older, slower fetch painting over a newer one -
+	// refresh() is called on every form refresh and on every
+	// primary-contact change, so two can easily be in flight at once.
+	let latest_fetch = 0;
+	let has_rendered = false;
+
 	async function refresh() {
-		$list.html(`<div class="la-loading text-muted">${__("Loading...")}</div>`);
+		// Only show the loading placeholder on the very first paint.
+		// Blanking already-correct rows on every refresh (form load, every
+		// save, every route back to the form) is what made this section
+		// flash and jump height for no reason - keep what's on screen
+		// until the new rows are actually in hand.
+		if (!has_rendered) {
+			$list.html(`<div class="la-loading text-muted">${__("Loading...")}</div>`);
+		}
+
+		const fetch_id = ++latest_fetch;
 		let rows;
 		try {
 			rows = (await opts.fetch()) || [];
 		} catch (e) {
-			$list.html(`<div class="text-muted">${__("Couldn't load addresses right now.")}</div>`);
+			if (fetch_id === latest_fetch) {
+				$list.html(`<div class="text-muted">${__("Couldn't load addresses right now.")}</div>`);
+				has_rendered = false;
+			}
 			return;
 		}
+		if (fetch_id !== latest_fetch) return; // superseded by a newer fetch
 		render_rows(rows);
+		has_rendered = true;
 	}
 
 	function render_rows(rows) {
@@ -59,7 +79,10 @@ contact_enhancements.render_linked_addresses = function (field, opts) {
 			$list.append(`<div class="la-empty text-muted">${opts.empty_message || __("No addresses linked yet.")}</div>`);
 			return;
 		}
-		rows.forEach((addr) => $list.append(render_card(addr)));
+		// One insert rather than one per row - each render_card() call is
+		// already an HTML parse, and appending them individually makes the
+		// attached flex container re-layout N times.
+		$list.append(rows.map((addr) => render_card(addr)));
 	}
 
 	function render_card(addr) {

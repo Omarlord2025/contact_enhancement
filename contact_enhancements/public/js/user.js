@@ -110,15 +110,28 @@ function show_user_onboarding_dialog(frm) {
 			}
 
 			if ((need_name && !values.new_first_name) || (need_email && !values.email)) {
-				frappe.db.get_value("Contact", contact_name, ["full_name", "email_id"]).then(({ message }) => {
-					if (!message) return;
-					if (need_name && !values.new_first_name && !frm.doc.first_name && message.full_name) {
-						frm.set_value("first_name", message.full_name);
-					}
-					if (need_email && !values.email && !frm.doc.email && message.email_id) {
-						frm.set_value("email", message.email_id);
-					}
-				});
+				frappe.db
+					.get_value("Contact", contact_name, ["full_name", "email_id"])
+					.then(({ message }) => {
+						if (!message) return;
+						if (need_name && !values.new_first_name && !frm.doc.first_name && message.full_name) {
+							frm.set_value("first_name", message.full_name);
+						}
+						if (need_email && !values.email && !frm.doc.email && message.email_id) {
+							frm.set_value("email", message.email_id);
+						}
+					})
+					// This is the ONLY thing filling first_name/email on the
+					// pick-an-existing-Contact path, and both are mandatory
+					// on User - a silent failure here leaves the form
+					// unsavable with no explanation of what's missing.
+					.catch(() => {
+						frappe.msgprint({
+							title: __("Could not read that Contact"),
+							message: __("Enter the Full Name and Email for this user manually."),
+							indicator: "orange",
+						});
+					});
 			}
 		},
 	});
@@ -134,22 +147,58 @@ function render_linked_addresses(frm) {
 	// needs a Contact, not a saved User - see get_all_addresses_for_user's
 	// own docstring), so only the add flow is gated on is_new(), not the
 	// whole section.
+	// Rebuild the whole component only when there isn't one yet, when the
+	// is_new() state it was built for has changed (that decides whether
+	// the "Add Address" button exists at all), or when its DOM was
+	// discarded by a form re-render. Otherwise reuse the handle and just
+	// re-fetch in place: refresh(frm) fires on load, on every save and on
+	// every route back to the form, and re-invoking the component each
+	// time empties the wrapper and repaints from scratch. Reusing it also
+	// fixes a real bug - a rebuild while the Add Address dialog is open
+	// detached the list its on_done callback still pointed at, so the
+	// newly linked address never appeared.
+	const is_new = !!frm.is_new();
+	const existing = frm.__ce_linked_addresses;
+	const still_attached = existing && $.contains(document, existing.wrapper);
+	if (existing && existing.is_new === is_new && still_attached) {
+		existing.handle.refresh();
+		return;
+	}
+
 	const handle = contact_enhancements.render_linked_addresses(field, {
-		fetch: () =>
-			frappe.call({
-				method: "contact_enhancements.api.user_addresses.get_all_addresses_for_user",
-				args: { user: frm.is_new() ? null : frm.doc.name, contact: frm.doc.user_primary_contact },
-			}).then((r) => r.message),
-		on_add: frm.is_new()
-			? null
-			: () => show_add_address_dialog(frm, () => handle.refresh()),
+		fetch: () => {
+			// A brand-new User with no Contact picked yet has nothing the
+			// server could possibly find - don't ask it.
+			if (frm.is_new() && !frm.doc.user_primary_contact) return Promise.resolve([]);
+			return frappe
+				.call({
+					method: "contact_enhancements.api.user_addresses.get_all_addresses_for_user",
+					args: { user: frm.is_new() ? null : frm.doc.name, contact: frm.doc.user_primary_contact },
+				})
+				.then((r) => {
+					// frappe.call resolves (with exc set) rather than
+					// rejecting on a server error, so a try/catch around
+					// it never fires - surface it as a rejection so the
+					// component shows its own error state.
+					if (r.exc) throw new Error(r.exc);
+					return r.message;
+				});
+		},
+		on_add: is_new ? null : () => show_add_address_dialog(frm, () => handle.refresh()),
 		on_remove: (address) =>
-			frappe.call({
-				method: "contact_enhancements.api.user_addresses.unlink_address_from_user",
-				args: { address, user: frm.doc.name },
-			}),
+			frappe
+				.call({
+					method: "contact_enhancements.api.user_addresses.unlink_address_from_user",
+					args: { address, user: frm.doc.name },
+					error: () => frappe.msgprint(__("Could not remove that address. Please try again.")),
+				})
+				.then((r) => {
+					if (r.exc) throw new Error(r.exc);
+					return r.message;
+				}),
 		empty_message: __("No addresses yet - link one directly, or pick a Contact that already has one via a Customer, Supplier, Employee, or Lead."),
 	});
+	frm.__ce_linked_addresses = { handle, is_new, wrapper: field.$wrapper[0] };
 }
 
 // Same data-entry window pattern as contact_picker_dialog.js - one dialog,

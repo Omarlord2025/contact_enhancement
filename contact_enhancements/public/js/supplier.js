@@ -52,11 +52,17 @@ frappe.ui.form.on("Supplier", {
 		// the dialog's own "Create New Contact" path filled in
 		// supplier_name, never the "pick an existing Contact" path.
 		if (frm.doc.supplier_primary_contact && !frm.doc.supplier_name) {
-			frappe.db.get_value("Contact", frm.doc.supplier_primary_contact, "full_name").then(({ message }) => {
-				if (message && message.full_name && !frm.doc.supplier_name) {
-					frm.set_value("supplier_name", message.full_name);
-				}
-			});
+			frappe.db
+				.get_value("Contact", frm.doc.supplier_primary_contact, "full_name")
+				.then(({ message }) => {
+					if (message && message.full_name && !frm.doc.supplier_name) {
+						frm.set_value("supplier_name", message.full_name);
+					}
+				})
+				// supplier_name is editable and this is only a convenience
+				// prefill, so a failure shouldn't interrupt anyone - but it
+				// must not surface as an unhandled rejection either.
+				.catch(() => {});
 		}
 
 		apply_address_fallback(frm);
@@ -73,10 +79,21 @@ async function apply_address_fallback(frm) {
 	// supplier_primary_address itself stays optional.
 	if (!frm.doc.supplier_primary_contact || frm.doc.supplier_primary_address) return;
 
-	const r = await frappe.call({
-		method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
-		args: { contact: frm.doc.supplier_primary_contact, exclude_doctype: "Supplier", exclude_name: frm.doc.name },
-	});
+	// supplier_primary_address is optional (unlike Customer's), so a
+	// failed lookup is a missed convenience, not a blocked save - stay
+	// quiet rather than interrupting, but don't leave the promise
+	// rejecting unhandled. frappe.call resolves with exc set instead of
+	// rejecting, so check both.
+	let r;
+	try {
+		r = await frappe.call({
+			method: "contact_enhancements.api.contact_lookup.get_address_from_contact_links",
+			args: { contact: frm.doc.supplier_primary_contact, exclude_doctype: "Supplier", exclude_name: frm.doc.name },
+		});
+	} catch (e) {
+		return;
+	}
+	if (!r || r.exc) return;
 	if (r.message && !frm.doc.supplier_primary_address) {
 		await frm.set_value("supplier_primary_address", r.message);
 	}
