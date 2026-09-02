@@ -24,6 +24,7 @@ landline "duplicates" that are usually legitimate (a shared office line).
 """
 
 import frappe
+from frappe.query_builder.functions import Count
 
 NO_MATCH = "NO_MATCH"
 PHONE_MATCH = "PHONE_MATCH"
@@ -132,6 +133,66 @@ def warn_if_duplicate_contact(doc, method=None):
 	)
 
 
+def _contact_phone_pairs_with_repeated_rows():
+	"""Every (Contact, phone) pair that appears on more than one Contact
+	Phone row - i.e. the same number entered twice on the same Contact.
+
+	Grouped in SQL for the same reason as
+	_phones_shared_by_multiple_contacts, and its own seam for the same
+	testability reason (see that function's docstring).
+
+	Returns:
+		A sequence of (parent, phone) row tuples.
+	"""
+	contact_phone = frappe.qb.DocType("Contact Phone")
+	return (
+		frappe.qb.from_(contact_phone)
+		.select(contact_phone.parent, contact_phone.phone)
+		.where(
+			(contact_phone.custom_landline == 0)
+			& contact_phone.phone.isnotnull()
+			& (contact_phone.phone != "")
+		)
+		.groupby(contact_phone.parent, contact_phone.phone)
+		.having(Count(contact_phone.name) > 1)
+	).run()
+
+
+def _phones_shared_by_multiple_contacts():
+	"""Every non-landline phone number attached to more than one Contact,
+	grouped by the database rather than in Python.
+
+	The previous approach read *every* non-landline Contact Phone row into
+	a dict to find a handful of duplicates - shipping the whole table over
+	the wire, synchronously, inside a web request (the Duplicate Mobile
+	Contacts page calls this on load) against a table that grows with
+	every Contact ever created. custom_landline is unindexed and
+	near-all-zeros so it narrows nothing either. GROUP BY ... HAVING
+	returns only the offending numbers, typically a handful of rows.
+
+	Its own seam (rather than being inlined) so tests can exercise the
+	grouping/reporting logic around it without needing genuinely colliding
+	rows in the database - which the live UNIQUE INDEX from
+	patches.add_contact_phone_unique_mobile_index makes impossible to
+	construct at all (see tests/test_contact_dedupe._add_duplicate_phone).
+
+	Returns:
+		A list of phone values, each shared by 2+ distinct Contacts.
+	"""
+	contact_phone = frappe.qb.DocType("Contact Phone")
+	return (
+		frappe.qb.from_(contact_phone)
+		.select(contact_phone.phone)
+		.where(
+			(contact_phone.custom_landline == 0)
+			& contact_phone.phone.isnotnull()
+			& (contact_phone.phone != "")
+		)
+		.groupby(contact_phone.phone)
+		.having(Count(contact_phone.parent).distinct() > 1)
+	).run(pluck=True)
+
+
 def find_duplicate_mobile_contacts():
 	"""Every phone number shared by more than one distinct Contact, among
 	non-landline Contact Phone rows only.
@@ -156,9 +217,14 @@ def find_duplicate_mobile_contacts():
 		dicts, one per number shared by 2+ distinct Contacts, worst
 		offenders (most Contacts sharing one number) first.
 	"""
+	duplicate_phones = _phones_shared_by_multiple_contacts()
+	if not duplicate_phones:
+		return []
+
+	# Second read fetches members for the offending numbers only.
 	rows = frappe.get_all(
 		"Contact Phone",
-		filters={"custom_landline": 0, "phone": ["not in", ("", None)]},
+		filters={"custom_landline": 0, "phone": ["in", duplicate_phones]},
 		fields=["phone", "parent"],
 		distinct=True,
 	)
@@ -267,14 +333,31 @@ def find_duplicate_phone_rows_within_contact():
 		"rows": [Contact Phone row name, ...]} dicts, one per (Contact,
 		phone) pair with 2+ rows.
 	"""
+	# Same reasoning as _phones_shared_by_multiple_contacts: let the
+	# database find the (Contact, phone) pairs that actually repeat rather
+	# than reading every non-landline row in the table into Python to
+	# discover that almost none of them do.
+	duplicate_pairs = _contact_phone_pairs_with_repeated_rows()
+	if not duplicate_pairs:
+		return []
+
 	rows = frappe.get_all(
 		"Contact Phone",
-		filters={"custom_landline": 0, "phone": ["not in", ("", None)]},
+		filters={
+			"custom_landline": 0,
+			"parent": ["in", list({contact for contact, _phone in duplicate_pairs})],
+			"phone": ["in", list({phone for _contact, phone in duplicate_pairs})],
+		},
 		fields=["name", "phone", "parent"],
 	)
 
+	wanted = set(duplicate_pairs)
 	rows_by_contact_phone = {}
 	for row in rows:
+		# The two "in" filters above match their cross-product, so a row
+		# can come back for a pair that never actually repeated.
+		if (row.parent, row.phone) not in wanted:
+			continue
 		rows_by_contact_phone.setdefault((row.parent, row.phone), []).append(row.name)
 
 	return [

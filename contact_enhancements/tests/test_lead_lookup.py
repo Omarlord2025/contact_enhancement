@@ -339,3 +339,14 @@ class TestSyncWhatsappToContact(FrappeTestCase):
 		self.assertEqual(matches[0].country, "Egypt")
 
 
+
+
+class TestLeadSnapshotForAMissingLead(FrappeTestCase):
+	def test_returns_empty_instead_of_raising_when_the_lead_is_gone(self):
+		# A Dynamic Link can outlive the Lead it names (deleted between
+		# the link lookup and this read, or a stale link left behind).
+		# frappe.db.get_value returns None there, and the old code went
+		# straight to lead.company_name -> AttributeError.
+		from contact_enhancements.api.lead_lookup import _lead_snapshot
+
+		self.assertEqual(_lead_snapshot("LEAD-does-not-exist-xyz"), {})

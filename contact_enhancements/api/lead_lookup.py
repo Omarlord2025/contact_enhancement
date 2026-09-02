@@ -133,6 +133,13 @@ def _lead_snapshot(lead_name):
 		only apply where currently blank.
 	"""
 	lead = frappe.db.get_value("Lead", lead_name, LEAD_SNAPSHOT_FIELDS, as_dict=True)
+	# get_value returns None for a Lead that no longer exists - possible
+	# whenever the Dynamic Link that named it outlives the Lead itself
+	# (deleted between the link lookup and this read, or a stale link left
+	# behind). Every caller already treats an empty snapshot as "nothing to
+	# prefill", so return that rather than raising AttributeError.
+	if not lead:
+		return {}
 
 	if lead.company_name:
 		customer_type = "Company"

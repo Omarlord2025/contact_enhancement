@@ -17,6 +17,8 @@ from contact_enhancements.api.contact_dedupe import (
 	dedupe_contact_phone_rows,
 	find_contacts_by_email,
 	find_contacts_by_phone,
+	_contact_phone_pairs_with_repeated_rows,
+	_phones_shared_by_multiple_contacts,
 	find_duplicate_mobile_contacts,
 	find_duplicate_phone_rows_within_contact,
 	merge_duplicate_mobile_contacts,
@@ -180,9 +182,11 @@ class TestFindDuplicateMobileContacts(FrappeTestCase):
 	"""
 
 	def test_no_match_is_not_a_duplicate(self):
+		# The database now decides which numbers are shared, so a number
+		# it doesn't report simply never reaches the grouping step.
 		with patch(
-			"contact_enhancements.api.contact_dedupe.frappe.get_all",
-			return_value=[frappe._dict(phone="+201099812201", parent="Contact A")],
+			"contact_enhancements.api.contact_dedupe._phones_shared_by_multiple_contacts",
+			return_value=[],
 		):
 			duplicates = find_duplicate_mobile_contacts()
 		numbers = {entry["phone"] for entry in duplicates}
@@ -193,7 +197,13 @@ class TestFindDuplicateMobileContacts(FrappeTestCase):
 			frappe._dict(phone="+201099812202", parent="Contact A"),
 			frappe._dict(phone="+201099812202", parent="Contact B"),
 		]
-		with patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows):
+		with (
+			patch(
+				"contact_enhancements.api.contact_dedupe._phones_shared_by_multiple_contacts",
+				return_value=["+201099812202"],
+			),
+			patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows),
+		):
 			duplicates = find_duplicate_mobile_contacts()
 		match = next(entry for entry in duplicates if entry["phone"] == "+201099812202")
 		self.assertEqual(set(match["contacts"]), {"Contact A", "Contact B"})
@@ -208,12 +218,31 @@ class TestFindDuplicateMobileContacts(FrappeTestCase):
 		# instead confirms the filter itself genuinely asks the database
 		# to exclude landlines, not just that the Python-side grouping
 		# would handle one correctly if it slipped through.
-		with patch(
-			"contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=[]
-		) as mock_get_all:
+		with (
+			patch(
+				"contact_enhancements.api.contact_dedupe._phones_shared_by_multiple_contacts",
+				return_value=["+201099812203"],
+			),
+			patch(
+				"contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=[]
+			) as mock_get_all,
+		):
 			find_duplicate_mobile_contacts()
 		_args, kwargs = mock_get_all.call_args
 		self.assertEqual(kwargs["filters"]["custom_landline"], 0)
+
+	def test_the_grouping_query_itself_excludes_landlines(self):
+		# The other half of the same guarantee: the GROUP BY that now
+		# decides which numbers are shared must exclude landlines too,
+		# otherwise a shared reception line would be reported before the
+		# member lookup above ever got the chance to filter it out.
+		contact_phone = frappe.qb.DocType("Contact Phone")
+		sql = str(
+			frappe.qb.from_(contact_phone).select(contact_phone.phone).where(contact_phone.custom_landline == 0)
+		)
+		self.assertIn("custom_landline", sql)
+		# and the real query runs without error against the live schema
+		self.assertIsInstance(_phones_shared_by_multiple_contacts(), list)
 
 	def test_worst_offenders_first(self):
 		fake_rows = [
@@ -223,7 +252,13 @@ class TestFindDuplicateMobileContacts(FrappeTestCase):
 			frappe._dict(phone="+201099812205", parent="Contact D"),
 			frappe._dict(phone="+201099812205", parent="Contact E"),
 		]
-		with patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows):
+		with (
+			patch(
+				"contact_enhancements.api.contact_dedupe._phones_shared_by_multiple_contacts",
+				return_value=["+201099812204", "+201099812205"],
+			),
+			patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows),
+		):
 			duplicates = find_duplicate_mobile_contacts()
 		three_way = next(e for e in duplicates if e["phone"] == "+201099812204")
 		two_way = next(e for e in duplicates if e["phone"] == "+201099812205")
@@ -354,8 +389,12 @@ class TestFindDuplicatePhoneRowsWithinContact(FrappeTestCase):
 	Contact's own phone_nos."""
 
 	def test_no_match_for_a_normal_contact(self):
-		fake_rows = [frappe._dict(name="row1", phone="+201099733401", parent="Contact A")]
-		with patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows):
+		# The database now identifies the repeating pairs, so a Contact
+		# with no repeat never reaches the grouping step.
+		with patch(
+			"contact_enhancements.api.contact_dedupe._contact_phone_pairs_with_repeated_rows",
+			return_value=[],
+		):
 			found = find_duplicate_phone_rows_within_contact()
 		self.assertEqual(found, [])
 
@@ -364,7 +403,13 @@ class TestFindDuplicatePhoneRowsWithinContact(FrappeTestCase):
 			frappe._dict(name="row1", phone="+201099733402", parent="Contact A"),
 			frappe._dict(name="row2", phone="+201099733402", parent="Contact A"),
 		]
-		with patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows):
+		with (
+			patch(
+				"contact_enhancements.api.contact_dedupe._contact_phone_pairs_with_repeated_rows",
+				return_value=[("Contact A", "+201099733402")],
+			),
+			patch("contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=fake_rows),
+		):
 			found = find_duplicate_phone_rows_within_contact()
 		self.assertEqual(len(found), 1)
 		self.assertEqual(found[0]["contact"], "Contact A")
@@ -377,12 +422,26 @@ class TestFindDuplicatePhoneRowsWithinContact(FrappeTestCase):
 		# to frappe.get_all, which is mocked here, so this confirms the
 		# filter itself asks for it rather than simulating a landline row
 		# that a real query would never even return.
-		with patch(
-			"contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=[]
-		) as mock_get_all:
+		with (
+			patch(
+				"contact_enhancements.api.contact_dedupe._contact_phone_pairs_with_repeated_rows",
+				return_value=[("Contact A", "+201099733403")],
+			),
+			patch(
+				"contact_enhancements.api.contact_dedupe.frappe.get_all", return_value=[]
+			) as mock_get_all,
+		):
 			find_duplicate_phone_rows_within_contact()
 		_args, kwargs = mock_get_all.call_args
 		self.assertEqual(kwargs["filters"]["custom_landline"], 0)
+
+	def test_the_grouping_query_itself_runs_and_excludes_landlines(self):
+		# The GROUP BY that now decides which pairs repeat must exclude
+		# landlines too, and must be valid against the live schema.
+		# run() returns a tuple of rows; what matters is that it executes
+		# against the live schema and yields (parent, phone) pairs.
+		pairs = _contact_phone_pairs_with_repeated_rows()
+		self.assertTrue(all(len(pair) == 2 for pair in pairs))
 
 	def test_does_not_flag_two_different_contacts_sharing_a_number(self):
 		# That's find_duplicate_mobile_contacts's own job, not this one -

@@ -120,16 +120,31 @@ def _business_records(contact_names):
 		if row.link_doctype in STRONG_PARTY_DOCTYPES:
 			strong_party_contacts.add(row.parent)
 
+	# One batched existence check instead of frappe.db.exists() per doctype
+	# inside the loop. This app doesn't hard-depend on every one of these
+	# existing - tolerate a site where e.g. Purchase Order's app isn't
+	# installed.
+	installed_doctypes = set(
+		frappe.get_all("DocType", filters={"name": ["in", list(TRANSACTION_DOCTYPES)]}, pluck="name")
+	)
+
 	transaction_counts = dict.fromkeys(contact_names, 0)
 	for doctype in TRANSACTION_DOCTYPES:
-		if not frappe.db.exists("DocType", doctype):
-			# This app doesn't hard-depend on every one of these existing -
-			# tolerate a site where e.g. Purchase Order's app isn't installed.
+		if doctype not in installed_doctypes:
 			continue
+		# Counted by the database, not by fetching one row per transaction
+		# and adding them up in Python: these are the largest tables in an
+		# ERPNext site, so a Contact with 5,000 Sales Invoices used to pull
+		# 5,000 rows across the wire purely to arrive at the number 5000.
 		for row in frappe.get_all(
-			doctype, filters={"contact_person": ["in", contact_names]}, fields=["contact_person"]
+			doctype,
+			filters={"contact_person": ["in", contact_names]},
+			fields=["contact_person", "count(name) as transaction_count"],
+			group_by="contact_person",
 		):
-			transaction_counts[row.contact_person] = transaction_counts.get(row.contact_person, 0) + 1
+			transaction_counts[row.contact_person] = (
+				transaction_counts.get(row.contact_person, 0) + row.transaction_count
+			)
 
 	return {
 		name: {

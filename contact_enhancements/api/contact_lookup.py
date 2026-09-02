@@ -16,6 +16,10 @@ consolidated them) keeps resolving unchanged.
 import frappe
 from frappe import _
 
+# Upper bound for any caller-supplied page size on the whitelisted search
+# endpoints - see search_contacts_with_details.
+MAX_SEARCH_PAGE_LEN = 100
+
 from contact_enhancements.contact_hooks import validate_full_name_has_at_least_three_words
 from contact_enhancements.utils import (
 	address_display_fields,
@@ -283,6 +287,16 @@ def search_contacts_with_details(txt, start=0, page_len=10):
 		{"phone": ..., "channels": [...]} for every phone number that
 		Contact has, not just the one that matched).
 	"""
+	# Bounded because this is a whitelisted endpoint: the dialog always
+	# sends 10, but nothing stopped another authenticated caller asking
+	# for a million rows of a join that already can't use an index. Its
+	# sibling search_contact_by_phone gets this for free from
+	# @frappe.validate_and_sanitize_search_inputs, which cint()s these -
+	# that decorator can't be used here because it requires the full
+	# Link-field argument signature this function deliberately doesn't have.
+	start = max(frappe.utils.cint(start), 0)
+	page_len = min(max(frappe.utils.cint(page_len) or 10, 1), MAX_SEARCH_PAGE_LEN)
+
 	query, contact, contact_phone = _contact_search_query(txt, start, page_len)
 	matches = query.select(
 		contact.name,

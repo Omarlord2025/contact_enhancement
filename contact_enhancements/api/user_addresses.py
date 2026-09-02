@@ -17,6 +17,7 @@ section.
 
 import frappe
 
+from contact_enhancements.api.contact_lookup import escape_like_wildcards
 from contact_enhancements.utils import (
 	address_display_fields,
 	address_source_label,
@@ -52,6 +53,7 @@ def get_user_addresses(user):
 
 
 @frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
 def search_addresses_for_user(doctype, txt, searchfield, start, page_len, filters):
 	"""Link-field-style query for the "Add Address" dialog's own "search an
 	existing Address" field - unrestricted (every Address in the system,
@@ -68,13 +70,21 @@ def search_addresses_for_user(doctype, txt, searchfield, start, page_len, filter
 	Returns:
 		Rows of (name, address_title) matching txt.
 	"""
-	like_txt = f"%{txt}%"
+	# All four predicates go in or_filters. `filters` and `or_filters` are
+	# combined as `filters AND (or_filters)` - confirmed in
+	# frappe/model/db_query.py, which wraps the or_conditions in parens and
+	# ANDs them onto the rest - so keeping `name` in `filters` meant
+	# "name matches AND (title or line1 or city matches)". Searching by
+	# city alone therefore returned nothing; it only appeared to work
+	# because Address autonames as "<address_title>-<address_type>", so
+	# title text incidentally satisfied the name clause too.
+	# Wildcards are escaped so a typed "%" is matched literally rather
+	# than turning this into an unfiltered scan.
+	like_txt = f"%{escape_like_wildcards(txt)}%"
 	return frappe.get_all(
 		"Address",
-		filters=[
-			["Address", "name", "like", like_txt],
-		],
 		or_filters=[
+			["name", "like", like_txt],
 			["address_title", "like", like_txt],
 			["address_line1", "like", like_txt],
 			["city", "like", like_txt],

@@ -255,6 +255,52 @@ def create_primary_contact_fan_out_indexes():
 	frappe.db.updatedb("User")
 
 
+def create_transaction_contact_person_indexes():
+	"""Index contact_person on every transaction doctype the Duplicate
+	Mobile Contacts page counts transactions against.
+
+	api/duplicate_mobile_contacts._business_records asks each of these
+	"how many of your records name these Contacts?" - unindexed, that is a
+	full scan of Sales Invoice, Sales Order, Purchase Invoice and friends,
+	which are the largest tables in an ERPNext site, six of them, inside a
+	single page load.
+
+	Deliberately its own patch, separate from the rest: unlike every other
+	index this app adds, these ALTER TABLE statements run against
+	genuinely large production tables and are not instant. Run it in a
+	maintenance window. It is also the one index set that buys nothing on
+	a small site - it exists for the 10k+ Contact case, where the page
+	otherwise risks timing out.
+
+	Reads the doctype list from api/duplicate_mobile_contacts rather than
+	repeating it, so the two can't drift: any doctype added to that count
+	needs this index too.
+
+	Same frappe.db.updatedb() requirement as every other schema-affecting
+	Property Setter here (see create_contact_enhancements_index_property_
+	setters's own docstring for the mechanism). Doctypes that aren't
+	installed on this site are skipped rather than erroring.
+	"""
+	from contact_enhancements.api.duplicate_mobile_contacts import TRANSACTION_DOCTYPES
+
+	installed = set(
+		frappe.get_all("DocType", filters={"name": ["in", list(TRANSACTION_DOCTYPES)]}, pluck="name")
+	)
+	for doctype in TRANSACTION_DOCTYPES:
+		if doctype not in installed:
+			continue
+		frappe.make_property_setter(
+			{
+				"doctype": doctype,
+				"fieldname": "contact_person",
+				"property": "search_index",
+				"value": "1",
+				"property_type": "Check",
+			}
+		)
+		frappe.db.updatedb(doctype)
+
+
 def create_contact_full_name_property_setters():
 	"""Relabel Contact.first_name to "Full Name" (Phase 0e) - the practical
 	pattern already in use everywhere a Contact gets created through this

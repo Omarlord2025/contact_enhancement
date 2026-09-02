@@ -6,6 +6,7 @@ contact picker Customer's own dialog already used)."""
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from contact_enhancements.api import contact_lookup as contact_lookup_module
 from contact_enhancements.api.contact_lookup import (
 	create_minimal_contact,
 	escape_like_wildcards,
@@ -341,3 +342,45 @@ class TestGetAddressesForContact(FrappeTestCase):
 		results = get_addresses_for_contact(contact.name)
 
 		self.assertEqual({r["name"] for r in results}, {customer_address.name, supplier_address.name})
+
+
+class TestSearchPageLenIsBounded(FrappeTestCase):
+	"""search_contacts_with_details is whitelisted, so page_len arrives
+	from the caller. The dialog sends 10, but nothing stopped anyone
+	asking for a million rows of a join that can't use an index."""
+
+	def test_an_absurd_page_len_is_clamped(self):
+		from contact_enhancements.api.contact_lookup import MAX_SEARCH_PAGE_LEN
+
+		captured = {}
+		original = contact_lookup_module._contact_search_query
+
+		def spy(txt, start, page_len):
+			captured["page_len"] = page_len
+			captured["start"] = start
+			return original(txt, start, page_len)
+
+		contact_lookup_module._contact_search_query = spy
+		try:
+			search_contacts_with_details("Omar", start=-5, page_len=1000000)
+		finally:
+			contact_lookup_module._contact_search_query = original
+
+		self.assertEqual(captured["page_len"], MAX_SEARCH_PAGE_LEN)
+		self.assertEqual(captured["start"], 0)
+
+	def test_a_normal_page_len_is_left_alone(self):
+		captured = {}
+		original = contact_lookup_module._contact_search_query
+
+		def spy(txt, start, page_len):
+			captured["page_len"] = page_len
+			return original(txt, start, page_len)
+
+		contact_lookup_module._contact_search_query = spy
+		try:
+			search_contacts_with_details("Omar", page_len=10)
+		finally:
+			contact_lookup_module._contact_search_query = original
+
+		self.assertEqual(captured["page_len"], 10)

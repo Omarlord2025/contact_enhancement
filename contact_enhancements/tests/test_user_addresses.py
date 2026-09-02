@@ -7,6 +7,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.api.user_addresses import (
+	search_addresses_for_user,
 	create_and_link_address,
 	get_all_addresses_for_user,
 	get_user_addresses,
@@ -205,3 +206,69 @@ class TestGetAllAddressesForUser(FrappeTestCase):
 		by_name = {r["name"]: r for r in results}
 		self.assertTrue(by_name[direct_address.name]["removable"])
 		self.assertFalse(by_name[shared_address.name]["removable"])
+
+
+class TestSearchAddressesForUser(FrappeTestCase):
+	"""The "Add Address" dialog's own search field. `filters` and
+	`or_filters` are combined as `filters AND (or_filters)`, so keeping
+	the name predicate in `filters` meant every other predicate was
+	effectively ANDed against it."""
+
+	def _search(self, txt):
+		return [row[0] for row in search_addresses_for_user("Address", txt, "name", 0, 20, {})]
+
+	def test_finds_an_address_by_city_alone(self):
+		# The regression this fixes: city never matched on its own,
+		# because the Address name had to match the same text too.
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": frappe.generate_hash(length=10),
+				"address_type": "Office",
+				"address_line1": "9 Unrelated Street",
+				"city": "Alexandria",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+		self.assertIn(address.name, self._search("Alexandria"))
+
+	def test_finds_an_address_by_address_line_alone(self):
+		token = frappe.generate_hash(length=8)
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": frappe.generate_hash(length=10),
+				"address_type": "Office",
+				"address_line1": f"{token} Boulevard",
+				"city": "Cairo",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+		self.assertIn(address.name, self._search(token))
+
+	def test_still_finds_an_address_by_title(self):
+		token = frappe.generate_hash(length=8)
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": token,
+				"address_type": "Office",
+				"address_line1": "1 Some Street",
+				"city": "Cairo",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+		self.assertIn(address.name, self._search(token))
+
+	def test_a_wildcard_is_searched_literally(self):
+		frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": frappe.generate_hash(length=10),
+				"address_type": "Office",
+				"address_line1": "2 Wildcard Street",
+				"city": "Cairo",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+		self.assertEqual(self._search("%"), [])

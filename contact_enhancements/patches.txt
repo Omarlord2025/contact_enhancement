@@ -49,6 +49,11 @@ contact_enhancements.patches.dedupe_contact_phone_rows_within_contact
 # index for the same reason as the patches above it, so it isn't blocked
 # by that patch's own expected abort.
 contact_enhancements.patches.add_primary_contact_fan_out_indexes
+# add_transaction_contact_person_indexes is also independent of the
+# phone-uniqueness chain. NOTE: its ALTER TABLEs run against the largest
+# tables in an ERPNext site and are not instant on real data - run the
+# migrate that first picks this up in a maintenance window.
+contact_enhancements.patches.add_transaction_contact_person_indexes
 # add_contact_phone_unique_mobile_index aborts loudly (pointing back at the
 # report above, or at find_duplicate_phone_rows_within_contact) if any
 # duplicate remains unresolved - see that patch's own docstring. Expected
