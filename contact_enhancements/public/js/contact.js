@@ -78,8 +78,20 @@ function normalize_arabic_first_name(name) {
 
 frappe.ui.form.on("Contact", {
 	first_name(frm) {
-		const normalized = normalize_arabic_first_name(frm.doc.first_name);
-		if (normalized !== frm.doc.first_name) {
+		const raw = frm.doc.first_name;
+		if (!raw) return;
+
+		// Preserve a trailing space while the user is still typing.
+		// normalize_arabic_first_name() trims, so without this the space
+		// pressed to start the second word was normalized away and written
+		// straight back into the field - making it impossible to type a
+		// multi-word name at all, which is exactly what this app requires.
+		// Re-appending it means the common case ("Ahmed " -> "Ahmed" + " ")
+		// is identical to what was typed, so set_value never fires and the
+		// field is left completely alone mid-word.
+		const trailing_space = /\s$/.test(raw) ? " " : "";
+		const normalized = normalize_arabic_first_name(raw) + trailing_space;
+		if (normalized !== raw) {
 			frm.set_value("first_name", normalized);
 		}
 	},
