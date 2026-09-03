@@ -7,6 +7,7 @@ second real caller (Supplier) proved they're not Customer-specific.
 """
 
 import frappe
+from frappe import _
 
 
 def dynamic_link_lookup(filters, return_field):
@@ -103,6 +104,13 @@ def ensure_doc_linked_to_parent(parent_doc, fieldname, linked_doctype, linked_do
 	if already_linked:
 		return linked_doc
 
+	# The old parent.save() applied a permission check before writing;
+	# inserting the child row directly skips the whole document lifecycle,
+	# so the check has to be made explicitly or this would silently become
+	# a privilege escalation - anyone able to save the parent could write
+	# a row into a Contact they have no right to modify.
+	_check_may_link(parent_doc, linked_doctype, linked_name)
+
 	# Deliberately never loads the document to do this - the row is
 	# inserted directly, so the miss path costs one INSERT rather than a
 	# full document load plus a full document save. See
@@ -151,6 +159,50 @@ def backfill_name_from_primary_contact(doc, contact_fieldname, name_fieldname):
 	full_name = frappe.db.get_value("Contact", doc.get(contact_fieldname), "full_name")
 	if full_name:
 		doc.set(name_fieldname, full_name)
+
+
+def _check_may_link(parent_doc, linked_doctype, linked_name):
+	"""Raise frappe.PermissionError unless the current user may write the
+	Contact/Address about to be linked.
+
+	Restores exactly what parent.save() used to enforce before this
+	function started inserting the child row directly: the same "write"
+	permission on the same document, honouring the same
+	parent_doc.flags.ignore_permissions escape hatch that was previously
+	passed straight through to save(). Without it, bypassing the document
+	lifecycle for speed would also have bypassed authorization - anyone
+	who can save a Customer could have written a row into any Contact.
+
+	Checked against the document, not just the doctype, so User
+	Permissions and owner-based rules still apply exactly as they did.
+	That costs one document load, but only for a non-Administrator who is
+	genuinely about to add a missing link: frappe.has_permission returns
+	early for Administrator without loading anything, and the far more
+	common "already linked" case returns before this is ever reached.
+
+	Args:
+		parent_doc: the document whose save triggered the link.
+		linked_doctype: "Contact" or "Address".
+		linked_name: the record being linked to.
+
+	Raises:
+		frappe.PermissionError: if the user may not write that record.
+	"""
+	if parent_doc.flags.ignore_permissions:
+		return
+
+	# frappe.has_permission (the top-level wrapper) takes `throw`, not the
+	# `raise_exception` of frappe.permissions.has_permission underneath -
+	# left False so the failure is raised below with a message naming both
+	# records, rather than Frappe's generic one.
+	if frappe.has_permission(linked_doctype, "write", doc=linked_name, throw=False):
+		return
+
+	raise frappe.PermissionError(
+		_("Not permitted to link {0} {1} to this {2}.").format(
+			_(linked_doctype), linked_name, _(parent_doc.doctype)
+		)
+	)
 
 
 def _insert_dynamic_link(parenttype, parent, link_doctype, link_name):

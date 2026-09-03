@@ -193,6 +193,112 @@ class TestEnsureContactLinkedToParent(FrappeTestCase):
 
 		self.assertTrue(frappe.get_doc("Contact", contact.name).has_link("Customer", customer.name))
 
+	def test_the_permission_check_costs_no_document_load_for_administrator(self):
+		# frappe.has_permission returns early for Administrator without
+		# touching the document, so restoring the check must not undo the
+		# "don't load the Contact" win on the link path either.
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+
+		load_calls = []
+		original_get_doc = frappe.get_doc
+
+		def counting_get_doc(*args, **kwargs):
+			if args[:2] == ("Contact", contact.name) and not kwargs.get("for_update"):
+				load_calls.append(args)
+			return original_get_doc(*args, **kwargs)
+
+		frappe.get_doc = counting_get_doc
+		try:
+			customer.flags.ignore_permissions = False
+			ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+		finally:
+			frappe.get_doc = original_get_doc
+
+		self.assertEqual(load_calls, [])
+		contact.reload()
+		self.assertTrue(contact.has_link("Customer", customer.name))
+
+	def _link_as(self, user_email, customer, contact_name):
+		"""Run the link as a specific user, with permissions genuinely
+		enforced (the hooks that normally call this pass
+		ignore_permissions through from the parent save)."""
+		frappe.set_user(user_email)
+		try:
+			customer.flags.ignore_permissions = False
+			return ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_refuses_to_link_a_contact_the_user_cannot_write(self):
+		# Inserting the child row directly bypasses the whole document
+		# lifecycle, so the permission check parent.save() used to apply
+		# has to be made explicitly - otherwise anyone able to save a
+		# Customer could write a row into any Contact.
+		from contact_enhancements.tests.test_user_hooks import make_user
+
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+
+		# A brand-new User with no roles cannot write a Contact.
+		powerless = make_user()
+
+		with self.assertRaises(frappe.PermissionError):
+			self._link_as(powerless.name, customer, contact.name)
+
+		# ...and nothing was written behind the check.
+		contact.reload()
+		self.assertFalse(contact.has_link("Customer", customer.name))
+
+	def test_ignore_permissions_still_bypasses_the_check(self):
+		# The escape hatch parent.save(ignore_permissions=...) used to pass
+		# through must keep working - every doc_event in this app relies on
+		# it for background/system-driven saves.
+		from contact_enhancements.tests.test_user_hooks import make_user
+
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+		powerless = make_user()
+
+		frappe.set_user(powerless.name)
+		try:
+			customer.flags.ignore_permissions = True
+			ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+		finally:
+			frappe.set_user("Administrator")
+
+		contact.reload()
+		self.assertTrue(contact.has_link("Customer", customer.name))
+
+	def test_a_permitted_user_can_still_link(self):
+		# The check must not block someone who genuinely may write Contacts.
+		from contact_enhancements.tests.test_user_hooks import make_user
+
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+
+		allowed = make_user(roles=[{"role": "System Manager"}])
+		self._link_as(allowed.name, customer, contact.name)
+
+		contact.reload()
+		self.assertTrue(contact.has_link("Customer", customer.name))
+
 	def test_reuses_a_passed_in_contact_without_reloading(self):
 		# customer_primary_contact is set via a raw frappe.db.set_value,
 		# bypassing Customer's own on_update hook (which would otherwise

@@ -62,6 +62,7 @@ intended codepoint unambiguous on inspection.
 """
 
 import re
+import unicodedata
 
 import phonenumbers
 from phonenumbers import PhoneNumberType
@@ -115,6 +116,20 @@ def _is_allowed_name_character(char):
 	for letters in every script and False for digits, punctuation and
 	symbols, which is exactly the rule this always meant to express.
 
+	Combining marks (Unicode general category M*) count as part of a name
+	too, and isalpha() alone is False for every one of them. Without this
+	the rule destroyed every script that writes vowels as marks attached
+	to a consonant rather than as separate letters - Devanagari
+	"राम कुमार शर्मा" became "र म क म र शर म", and Tamil, Bengali, Thai
+	and pointed Hebrew failed the same way. It looked like the name
+	survived, because the consonants did.
+
+	This does not resurrect Arabic tashkeel: those are stripped earlier by
+	_strip_diacritics's own explicit codepoint ranges (rule 2), before
+	this rule ever sees them. Rule 2 stays a deliberate Arabic-specific
+	normalization; this is only about not shredding scripts whose vowels
+	are marks by construction.
+
 	The Arabic-specific rules elsewhere in this module (word-initial alef
 	hamza, word-final teh marbuta/yeh) are unaffected by widening this:
 	each targets specific Arabic codepoints, so they are inert on text in
@@ -126,7 +141,12 @@ def _is_allowed_name_character(char):
 	Returns:
 		True if it may stay in a name.
 	"""
-	return char.isalpha() or char.isspace() or char in NAME_PUNCTUATION
+	return (
+		char.isalpha()
+		or char.isspace()
+		or char in NAME_PUNCTUATION
+		or unicodedata.category(char).startswith("M")
+	)
 
 
 def _strip_disallowed_characters(name):

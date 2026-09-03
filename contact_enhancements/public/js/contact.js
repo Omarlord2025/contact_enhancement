@@ -44,7 +44,14 @@ function normalize_arabic_first_name(name) {
 	// (O'Brien, Anne-Marie, Al-Sayed), and treating them as symbols
 	// stored "O'Brien" as "O Brien". Mirrors contact_hooks.
 	// NAME_PUNCTUATION - keep the two in sync.
-	const invalidCharsPattern = /[^\p{L}\s'’-]/gu;
+	//
+	// \p{M} (combining marks) is kept for the same reason \p{L} is: in
+	// Devanagari, Tamil, Bengali, Thai and pointed Hebrew the vowels ARE
+	// marks attached to a consonant, so dropping them shredded the name
+	// while leaving the consonants behind - "राम कुमार शर्मा" became
+	// "र म क म र शर म". Mirrors the unicodedata.category(...) == "M*"
+	// arm of contact_hooks._is_allowed_name_character.
+	const invalidCharsPattern = /[^\p{L}\p{M}\s'’-]/gu;
 	name = name.replace(invalidCharsPattern, " ");
 
 	// 3. Collapse any whitespace run to a single space, trim the ends.

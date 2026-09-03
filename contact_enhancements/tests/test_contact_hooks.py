@@ -277,6 +277,35 @@ class TestNameNormalizerAcceptsEveryScript(FrappeTestCase):
 		# split in half) - two different corruptions from the same rule.
 		self.assertEqual(normalize_arabic_first_name("José Müller"), "José Müller")
 
+	def test_keeps_combining_marks_in_devanagari(self):
+		# The vowels here are combining marks, not letters, so an
+		# isalpha()-only rule replaced each with a space and left just the
+		# consonants: "राम कुमार शर्मा" became "र म क म र शर म". It looked
+		# like the name survived, because the consonants did.
+		self.assertEqual(normalize_arabic_first_name("राम कुमार शर्मा"), "राम कुमार शर्मा")
+
+	def test_keeps_combining_marks_in_tamil(self):
+		self.assertEqual(normalize_arabic_first_name("ராம் குமார் ராஜா"), "ராம் குமார் ராஜா")
+
+	def test_keeps_combining_marks_in_bengali(self):
+		self.assertEqual(normalize_arabic_first_name("রাম কুমার শর্মা"), "রাম কুমার শর্মা")
+
+	def test_keeps_thai_vowel_signs(self):
+		self.assertEqual(normalize_arabic_first_name("สมชาย ใจดี"), "สมชาย ใจดี")
+
+	def test_keeps_hebrew_vowel_points(self):
+		self.assertEqual(normalize_arabic_first_name("דָּוִד כֹּהֵן"), "דָּוִד כֹּהֵן")
+
+	def test_allowing_marks_does_not_resurrect_arabic_tashkeel(self):
+		# Rule 2 strips tashkeel by explicit codepoint range, and runs
+		# before the character rule - so widening that rule to accept
+		# marks must not undo it.
+		self.assertEqual(normalize_arabic_first_name("مُحمد"), "محمد")
+
+	def test_a_token_of_only_marks_is_still_dropped(self):
+		# Marks are allowed inside a name, never as a component of one.
+		self.assertEqual(normalize_arabic_first_name("Ahmed ा् Ali"), "Ahmed Ali")
+
 	def test_keeps_an_apostrophe_inside_a_name(self):
 		# Stored "O Brien" before - a silently corrupted name.
 		self.assertEqual(normalize_arabic_first_name("O'Brien Sean Murphy"), "O'Brien Sean Murphy")
