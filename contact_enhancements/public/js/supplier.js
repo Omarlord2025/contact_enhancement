@@ -51,13 +51,48 @@ frappe.ui.form.on("Supplier", {
 		// reasoning still applies - this is what was missing before: only
 		// the dialog's own "Create New Contact" path filled in
 		// supplier_name, never the "pick an existing Contact" path.
-		contact_enhancements.prefill_from_contact(frm, "supplier_primary_contact", {
-			supplier_name: "full_name",
-		});
+		apply_contact_identity(frm);
 
 		apply_address_fallback(frm);
 	},
 });
+
+async function apply_contact_identity(frm) {
+	// Name the Supplier after the picked Contact's company when it has
+	// one - a Contact with a company_name represents someone AT a company,
+	// so the Supplier being created for them is that company. Falls back
+	// to the contact person's own name.
+	//
+	// supplier_type is handled more conservatively than Customer's
+	// customer_type: it is a REQUIRED three-option Select the user
+	// actively answers (Company/Individual/Partnership), and Partnership
+	// cannot be derived from a Contact at all - so it is only corrected
+	// while still sitting at its "Company" default. See
+	// supplier_hooks.apply_contact_identity_before_naming for the full
+	// reasoning and the known limitation.
+	if (!frm.doc.supplier_primary_contact || frm.doc.supplier_name) return;
+
+	let r;
+	try {
+		r = await frappe.db.get_value("Contact", frm.doc.supplier_primary_contact, [
+			"full_name",
+			"company_name",
+		]);
+	} catch (e) {
+		return;
+	}
+	const contact = r && r.message;
+	if (!contact || frm.doc.supplier_name) return;
+
+	const is_company = !!contact.company_name;
+	const name = contact.company_name || contact.full_name;
+	if (!name) return;
+
+	await frm.set_value("supplier_name", name);
+	if (frm.doc.supplier_type === "Company") {
+		await frm.set_value("supplier_type", is_company ? "Company" : "Individual");
+	}
+}
 
 async function apply_address_fallback(frm) {
 	// Same cross-doctype address backfill supplier_hooks.sync_supplier_

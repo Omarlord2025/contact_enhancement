@@ -212,3 +212,78 @@ class TestSupplierContactRequirementIsGrandfathered(FrappeTestCase):
 
 	def test_the_field_is_no_longer_statically_mandatory(self):
 		self.assertFalse(frappe.get_meta("Supplier").get_field("supplier_primary_contact").reqd)
+
+
+class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
+	"""Same rule as Customer - a Contact with a company_name names the
+	Supplier after that company - but supplier_type is treated more
+	conservatively, because it is a REQUIRED three-option Select the user
+	actively answers and Partnership cannot be derived from a Contact."""
+
+	def _new_supplier(self, contact_name, supplier_type="Company"):
+		supplier = frappe.new_doc("Supplier")
+		supplier.supplier_primary_contact = contact_name
+		supplier.supplier_type = supplier_type
+		supplier.supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+		supplier.insert(ignore_permissions=True)
+		return supplier
+
+	def test_a_contact_with_a_company_name_names_the_supplier_after_it(self):
+		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		contact = make_contact(first_name=person)
+		company = "Nile Parts " + frappe.generate_hash(length=6)
+		frappe.db.set_value("Contact", contact.name, "company_name", company)
+
+		supplier = self._new_supplier(contact.name)
+
+		self.assertEqual(supplier.supplier_name, company)
+		self.assertEqual(supplier.supplier_type, "Company")
+
+	def test_a_contact_without_one_names_it_after_the_person(self):
+		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		contact = make_contact(first_name=person)
+
+		supplier = self._new_supplier(contact.name)
+
+		self.assertEqual(supplier.supplier_name, person)
+		# Corrected off the "Company" default - a Company named after a
+		# human is the shape propagation refuses to sync.
+		self.assertEqual(supplier.supplier_type, "Individual")
+
+	def test_a_deliberate_partnership_choice_is_never_overridden(self):
+		# The reason this is more conservative than Customer's equivalent.
+		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		contact = make_contact(first_name=person)
+		company = "Nile Partners " + frappe.generate_hash(length=6)
+		frappe.db.set_value("Contact", contact.name, "company_name", company)
+
+		supplier = self._new_supplier(contact.name, supplier_type="Partnership")
+
+		self.assertEqual(supplier.supplier_name, company)
+		self.assertEqual(supplier.supplier_type, "Partnership")
+
+	def test_a_deliberate_individual_choice_is_never_overridden(self):
+		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		contact = make_contact(first_name=person)
+		company = "Nile Parts " + frappe.generate_hash(length=6)
+		frappe.db.set_value("Contact", contact.name, "company_name", company)
+
+		supplier = self._new_supplier(contact.name, supplier_type="Individual")
+
+		self.assertEqual(supplier.supplier_name, company)
+		self.assertEqual(supplier.supplier_type, "Individual")
+
+	def test_a_name_already_chosen_is_never_overwritten(self):
+		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		contact = make_contact(first_name=person)
+		company = "Nile Parts " + frappe.generate_hash(length=6)
+		frappe.db.set_value("Contact", contact.name, "company_name", company)
+
+		supplier = frappe.new_doc("Supplier")
+		supplier.supplier_primary_contact = contact.name
+		supplier.supplier_name = "Deliberately Chosen Supplier"
+		supplier.supplier_type = "Company"
+		supplier.supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+		supplier.insert(ignore_permissions=True)
+
+		self.assertEqual(supplier.supplier_name, "Deliberately Chosen Supplier")

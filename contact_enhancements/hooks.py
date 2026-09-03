@@ -167,6 +167,9 @@ doc_events = {
 		"on_update": "contact_enhancements.customer_hooks.link_primary_contact",
 	},
 	"Supplier": {
+		# before_naming, not validate - Supplier.autoname() can read
+		# supplier_name directly, and naming runs before validate.
+		"before_naming": "contact_enhancements.supplier_hooks.apply_contact_identity_before_naming",
 		"validate": [
 			"contact_enhancements.supplier_hooks.backfill_supplier_primary_contact_from_dynamic_link",
 			"contact_enhancements.supplier_hooks.backfill_supplier_name_from_primary_contact",

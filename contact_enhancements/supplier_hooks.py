@@ -14,6 +14,7 @@ from contact_enhancements.utils import (
 	backfill_name_from_primary_contact,
 	ensure_contact_linked_to_parent,
 	ensure_doc_linked_to_parent,
+	party_identity_from_contact,
 	resolve_address_from_contact_links,
 )
 
@@ -29,6 +30,52 @@ def backfill_supplier_name_from_primary_contact(doc, method=None):
 		method: unused, present for the doc_events hook signature.
 	"""
 	backfill_name_from_primary_contact(doc, "supplier_primary_contact", "supplier_name")
+
+
+def apply_contact_identity_before_naming(doc, method=None):
+	"""Supplier before_naming hook - name the Supplier after its primary
+	Contact's company, falling back to the contact person's own name.
+
+	A Contact with a company_name represents someone AT a company, so the
+	Supplier being created for them is that company. Same rule Customer
+	applies (see customer_hooks.apply_contact_identity_before_naming), and
+	on before_naming for the same reason: ERPNext's Supplier.autoname()
+	can use supplier_name directly (when supp_master_name is
+	"Supplier Name"), and naming runs before validate.
+
+	supplier_type is treated more conservatively than Customer's
+	customer_type, deliberately. Customer's dialog offers a binary
+	Individual/Company toggle defaulting to Individual; Supplier's offers a
+	REQUIRED three-option Select - Company, Individual, Partnership -
+	which the user actively answers, and Partnership has no equivalent
+	that can be derived from a Contact at all. So the type is only
+	corrected while it is still sitting at its "Company" default: that
+	covers the genuinely wrong shape (a Company Supplier named after a
+	person, which propagate_contact_changes_to_linked_doctypes then
+	refuses to sync), while never overriding a deliberate Partnership or
+	Individual choice.
+
+	Known limitation of that heuristic: a user who deliberately selects
+	"Company" for a Contact carrying no company_name is indistinguishable
+	from one who left the default alone, and will be switched to
+	Individual. The alternative - leaving it - produces a Company named
+	after a human, which is the shape this app already refuses to
+	propagate, so this is the better of the two failures.
+
+	Args:
+		doc: the Supplier being named.
+		method: unused, present for the doc_events hook signature.
+	"""
+	if doc.supplier_name or not doc.supplier_primary_contact:
+		return
+
+	identity = party_identity_from_contact(doc.supplier_primary_contact)
+	if not identity:
+		return
+
+	doc.supplier_name = identity["party_name"]
+	if doc.supplier_type == "Company":
+		doc.supplier_type = identity["party_type"]
 
 
 def backfill_supplier_primary_contact_from_dynamic_link(doc, method=None):
