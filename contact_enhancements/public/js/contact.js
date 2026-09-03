@@ -26,7 +26,18 @@ function normalize_arabic_first_name(name) {
 	// 2. Replace disallowed characters (digits/symbols) with a space,
 	// not delete them outright - "Ahmed1Ali" -> "Ahmed Ali" (two
 	// words), not "AhmedAli" (silently merged).
-	const invalidCharsPattern = /[^a-zA-Z؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\s]/g;
+	//
+	// Any Unicode letter is allowed, matching contact_hooks.
+	// _is_allowed_name_character's own str.isalpha() rule. This was
+	// a-zA-Z plus the Arabic blocks and nothing else, which blanked
+	// Cyrillic/Chinese/Greek/Hebrew names outright and mangled accented
+	// Latin. Fixing only the Python side left this mirror silently
+	// destroying the name in the browser BEFORE the request was ever
+	// sent, so the server-side fix never got to run - caught by a real
+	// browser test, exactly the drift this file's own header warns about.
+	// \p{L} needs the "u" flag; it is the direct JS equivalent of
+	// Python's str.isalpha().
+	const invalidCharsPattern = /[^\p{L}\s]/gu;
 	name = name.replace(invalidCharsPattern, " ");
 
 	// 3. Collapse any whitespace run to a single space, trim the ends.
