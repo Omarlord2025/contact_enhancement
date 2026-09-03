@@ -51,6 +51,62 @@
 // other file that also calls it.
 frappe.provide("contact_enhancements");
 
+/**
+ * Prefill fields on a parent document from the Contact its primary-contact
+ * field points at - the "I picked a Contact, fill in the name" behaviour,
+ * in one place instead of re-implemented per doctype.
+ *
+ * Bound to the primary-contact field's own change event by each caller,
+ * NOT to the dialog, so it fires for every way that field can end up set:
+ * the picker dialog's search, the picker's create-new path, and the native
+ * Link dropdown directly. Getting this wrong is a mistake this app has
+ * already made twice - supplier.js originally only filled supplier_name on
+ * the dialog's create-new path, and user.js only ever filled first_name
+ * inside the dialog, so picking a Contact from the native dropdown synced
+ * nothing at all.
+ *
+ * Only ever fills a field that is currently blank: this is a convenience
+ * for a fresh record, never a rename of something already entered. The
+ * server-side equivalent for later renames
+ * (contact_hooks.propagate_contact_changes_to_linked_doctypes) is
+ * deliberately stricter still - it refuses to touch a Company's or a
+ * Partnership's trading name at all.
+ *
+ * @param {object} frm - the parent form.
+ * @param {string} contact_fieldname - field holding the Contact's name.
+ * @param {object} field_map - {target fieldname: Contact fieldname}, e.g.
+ *   {supplier_name: "full_name"} or {first_name: "full_name", email: "email_id"}.
+ * @returns {Promise} resolves once any prefill has been applied.
+ */
+contact_enhancements.prefill_from_contact = function (frm, contact_fieldname, field_map) {
+	const contact = frm.doc[contact_fieldname];
+	if (!contact) return Promise.resolve();
+
+	// Nothing to do if every target already has a value - skip the
+	// round-trip entirely rather than fetching and discarding.
+	const wanted = Object.keys(field_map).filter((target) => !frm.doc[target]);
+	if (!wanted.length) return Promise.resolve();
+
+	const source_fields = wanted.map((target) => field_map[target]);
+	return frappe.db
+		.get_value("Contact", contact, source_fields)
+		.then(({ message }) => {
+			if (!message) return;
+			wanted.forEach((target) => {
+				const value = message[field_map[target]];
+				// Re-check blankness: the await above gives other handlers
+				// (a Lead snapshot, say) a chance to fill it first, and
+				// theirs is the more specific answer.
+				if (value && !frm.doc[target]) frm.set_value(target, value);
+			});
+		})
+		.catch(() => {
+			// A convenience prefill into an editable field - never worth
+			// interrupting anyone over, but never left as an unhandled
+			// rejection either.
+		});
+};
+
 // A server error inside a non-cancelable dialog (static: true, no_cancel())
 // leaves the user with no way to close it and start over, so every
 // frappe.call here needs its own explicit error feedback, not just

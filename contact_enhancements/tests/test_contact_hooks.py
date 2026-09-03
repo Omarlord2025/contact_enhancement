@@ -254,6 +254,44 @@ class TestDetectPhoneCountry(FrappeTestCase):
 		self.assertIsNone(_detect_phone_country(None))
 
 
+class TestNameNormalizerAcceptsEveryScript(FrappeTestCase):
+	"""The allowed-character rule used to be a-zA-Z plus the Arabic
+	blocks and nothing else, which blanked every other script outright.
+	Because Contact.first_name is mandatory, a blanked name meant the
+	save failed, so those customers could not be created at all."""
+
+	def test_preserves_cyrillic(self):
+		self.assertEqual(normalize_arabic_first_name("Иван Петров"), "Иван Петров")
+
+	def test_preserves_greek(self):
+		self.assertEqual(normalize_arabic_first_name("Γιώργος Παπάς"), "Γιώργος Παπάς")
+
+	def test_preserves_chinese(self):
+		self.assertEqual(normalize_arabic_first_name("李伟 王芳"), "李伟 王芳")
+
+	def test_preserves_hebrew(self):
+		self.assertEqual(normalize_arabic_first_name("דוד כהן"), "דוד כהן")
+
+	def test_preserves_accented_latin(self):
+		# Previously "Jos" (accent silently dropped) and "M ller" (word
+		# split in half) - two different corruptions from the same rule.
+		self.assertEqual(normalize_arabic_first_name("José Müller"), "José Müller")
+
+	def test_still_strips_digits_and_symbols(self):
+		# Widening to "any letter" must not weaken rule 4 itself.
+		self.assertEqual(normalize_arabic_first_name("Ahmed1Ali"), "Ahmed Ali")
+		self.assertEqual(normalize_arabic_first_name("Ahmed@Ali"), "Ahmed Ali")
+
+	def test_arabic_rules_still_apply(self):
+		# The Arabic-specific normalizations target specific codepoints,
+		# so widening the character set leaves them working unchanged.
+		self.assertEqual(normalize_arabic_first_name("أحمد1  علي"), "احمد على")
+
+	def test_arabic_rules_do_not_touch_other_scripts(self):
+		# Those same rules must be inert on text that isn't Arabic.
+		self.assertEqual(normalize_arabic_first_name("Δημήτριος"), "Δημήτριος")
+
+
 class TestCountryForRegionCode(FrappeTestCase):
 	"""Country.code carries no index, so this reverse lookup scans
 	tabCountry - and it runs once per phone row on every Contact save,
@@ -811,10 +849,14 @@ class TestPropagateContactChangesToLinkedDoctypes(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("Customer", customer.name, "customer_name"), "Ahmed Mohamed Sabry")
 
 	def test_propagates_a_changed_name_to_supplier(self):
+		# Individual explicitly: make_supplier defaults to "Company", whose
+		# trading name is deliberately NOT synced from its contact person
+		# (see TestPropagationRespectsPartyType). Name propagation is only
+		# ever correct for an Individual.
 		from contact_enhancements.tests.test_supplier_hooks import make_supplier
 
 		contact = make_contact()
-		supplier = make_supplier(supplier_primary_contact=contact.name)
+		supplier = make_supplier(supplier_primary_contact=contact.name, supplier_type="Individual")
 		contact.reload()
 
 		contact.first_name = "Ahmed Mohamed Supplier"
@@ -976,3 +1018,138 @@ class TestPropagateContactChangesToLinkedDoctypes(FrappeTestCase):
 		]
 		# Both, not just the one whose mobile_no write happened to succeed.
 		self.assertEqual(first_names, ["Batched Fallback Person", "Batched Fallback Person"])
+
+
+class TestUniqueMobileRaisesADistinguishableError(FrappeTestCase):
+	"""The exception type is a public contract: other apps on this bench
+	create Contacts inside their own flows and need to catch "this number
+	is taken" without also swallowing every unrelated validation failure
+	this app's other Contact hooks raise."""
+
+	def test_cross_contact_conflict_raises_unique_validation_error(self):
+		make_contact(phone_nos=["01099766001"])
+		second = frappe.new_doc("Contact")
+		second.first_name = "Duplicate Number Person"
+		second.append("phone_nos", {"phone": "01099766001"})
+		with self.assertRaises(frappe.UniqueValidationError):
+			second.insert(ignore_permissions=True)
+
+	def test_same_contact_duplicate_row_raises_unique_validation_error(self):
+		contact = frappe.new_doc("Contact")
+		contact.first_name = "Repeated Row Person"
+		contact.append("phone_nos", {"phone": "01099766002"})
+		contact.append("phone_nos", {"phone": "01099766002"})
+		with self.assertRaises(frappe.UniqueValidationError):
+			contact.insert(ignore_permissions=True)
+
+	def test_an_unrelated_validation_failure_is_not_a_unique_error(self):
+		# The point of the change: a caller narrowing its catch to
+		# UniqueValidationError must NOT accidentally swallow this.
+		bad = frappe.new_doc("Contact")
+		bad.first_name = "Bad Phone Person"
+		bad.append("phone_nos", {"phone": "01312345678"})  # unissued prefix
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			bad.insert(ignore_permissions=True)
+		self.assertNotIsInstance(ctx.exception, frappe.UniqueValidationError)
+
+
+class TestPropagationRespectsPartyType(FrappeTestCase):
+	"""A Customer/Supplier is only the same entity as its primary contact
+	when it's an Individual. A Company or Partnership has its own trading
+	name, and overwriting it with the contact person's name is data loss."""
+
+	def _rename_contact(self, contact, new_name):
+		contact.reload()
+		contact.first_name = new_name
+		contact.save(ignore_permissions=True)
+
+	def test_a_company_customers_name_is_not_overwritten(self):
+		from contact_enhancements.tests.test_customer_hooks import make_customer
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		customer = make_customer(
+			customer_name="Acme Trading Company",
+			customer_type="Company",
+			customer_primary_contact=contact.name,
+		)
+		self._rename_contact(contact, "Kareem Mohamed Sabry")
+		self.assertEqual(
+			frappe.db.get_value("Customer", customer.name, "customer_name"), "Acme Trading Company"
+		)
+
+	def test_a_partnership_customers_name_is_not_overwritten(self):
+		# The reason this is an allowlist, not "skip when Company".
+		from contact_enhancements.tests.test_customer_hooks import make_customer
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		customer = make_customer(
+			customer_name="Sabry And Sons Partnership",
+			customer_type="Partnership",
+			customer_primary_contact=contact.name,
+		)
+		self._rename_contact(contact, "Kareem Mohamed Sabry")
+		self.assertEqual(
+			frappe.db.get_value("Customer", customer.name, "customer_name"),
+			"Sabry And Sons Partnership",
+		)
+
+	def test_an_individual_customers_name_is_still_synced(self):
+		from contact_enhancements.tests.test_customer_hooks import make_customer
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		customer = make_customer(
+			customer_name="Ahmed Mohamed Sabry",
+			customer_type="Individual",
+			customer_primary_contact=contact.name,
+		)
+		self._rename_contact(contact, "Kareem Mohamed Sabry")
+		self.assertEqual(
+			frappe.db.get_value("Customer", customer.name, "customer_name"), "Kareem Mohamed Sabry"
+		)
+
+	def test_a_company_suppliers_name_is_not_overwritten(self):
+		# Supplier has the identical Company/Individual/Partnership field
+		# and had the identical bug.
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		supplier = make_supplier(
+			supplier_name="Nile Parts Company",
+			supplier_type="Company",
+			supplier_primary_contact=contact.name,
+		)
+		self._rename_contact(contact, "Kareem Mohamed Sabry")
+		self.assertEqual(
+			frappe.db.get_value("Supplier", supplier.name, "supplier_name"), "Nile Parts Company"
+		)
+
+	def test_an_individual_suppliers_name_is_still_synced(self):
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		supplier = make_supplier(
+			supplier_name="Ahmed Mohamed Sabry",
+			supplier_type="Individual",
+			supplier_primary_contact=contact.name,
+		)
+		self._rename_contact(contact, "Kareem Mohamed Sabry")
+		self.assertEqual(
+			frappe.db.get_value("Supplier", supplier.name, "supplier_name"), "Kareem Mohamed Sabry"
+		)
+
+	def test_phone_and_email_still_sync_to_a_company(self):
+		# Only the NAME is gated - contact details still propagate.
+		from contact_enhancements.tests.test_customer_hooks import make_customer
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		customer = make_customer(
+			customer_name="Acme Trading Company",
+			customer_type="Company",
+			customer_primary_contact=contact.name,
+		)
+		contact.reload()
+		contact.append("phone_nos", {"phone": "01099766050", "is_primary_mobile_no": 1})
+		contact.save(ignore_permissions=True)
+		self.assertEqual(
+			frappe.db.get_value("Customer", customer.name, "mobile_no"), "+201099766050"
+		)

@@ -51,19 +51,9 @@ frappe.ui.form.on("Supplier", {
 		// reasoning still applies - this is what was missing before: only
 		// the dialog's own "Create New Contact" path filled in
 		// supplier_name, never the "pick an existing Contact" path.
-		if (frm.doc.supplier_primary_contact && !frm.doc.supplier_name) {
-			frappe.db
-				.get_value("Contact", frm.doc.supplier_primary_contact, "full_name")
-				.then(({ message }) => {
-					if (message && message.full_name && !frm.doc.supplier_name) {
-						frm.set_value("supplier_name", message.full_name);
-					}
-				})
-				// supplier_name is editable and this is only a convenience
-				// prefill, so a failure shouldn't interrupt anyone - but it
-				// must not surface as an unhandled rejection either.
-				.catch(() => {});
-		}
+		contact_enhancements.prefill_from_contact(frm, "supplier_primary_contact", {
+			supplier_name: "full_name",
+		});
 
 		apply_address_fallback(frm);
 	},

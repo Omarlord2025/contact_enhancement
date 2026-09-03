@@ -46,7 +46,10 @@ specific User.
 """
 
 from contact_enhancements.contact_hooks import strip_phone_formatting_noise
-from contact_enhancements.utils import ensure_contact_linked_to_parent
+from contact_enhancements.utils import (
+	backfill_name_from_primary_contact,
+	ensure_contact_linked_to_parent,
+)
 
 
 def validate_user_phone_before_contact_sync(doc, method=None):
@@ -64,6 +67,23 @@ def validate_user_phone_before_contact_sync(doc, method=None):
 		doc.phone = strip_phone_formatting_noise(doc.phone)
 	if doc.mobile_no:
 		doc.mobile_no = strip_phone_formatting_noise(doc.mobile_no)
+
+
+def backfill_user_name_from_primary_contact(doc, method=None):
+	"""User validate hook - fill first_name (relabeled "Full Name") from
+	the primary Contact's full_name when it's still blank. See
+	utils.backfill_name_from_primary_contact.
+
+	Deliberately does NOT touch email: User.email is this document's own
+	naming field, so writing it means renaming the User, which a
+	background backfill has no business deciding (the same reasoning that
+	keeps email out of _CONTACT_SYNC_TARGETS for User).
+
+	Args:
+		doc: the User being validated.
+		method: unused, present for the doc_events hook signature.
+	"""
+	backfill_name_from_primary_contact(doc, "user_primary_contact", "first_name")
 
 
 def link_user_contact(doc, method=None):

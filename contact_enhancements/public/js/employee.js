@@ -28,18 +28,9 @@ frappe.ui.form.on("Employee", {
 		// which fires for every path the field can end up set (this
 		// dialog's own search, the native Link dropdown directly, or
 		// creating a new one), not just the dialog's create-new path.
-		if (frm.doc.employee_primary_contact && !frm.doc.first_name) {
-			frappe.db
-				.get_value("Contact", frm.doc.employee_primary_contact, "full_name")
-				.then(({ message }) => {
-					if (message && message.full_name && !frm.doc.first_name) {
-						frm.set_value("first_name", message.full_name);
-					}
-				})
-				// A convenience prefill into an editable field - stay quiet
-				// on failure, but don't leave the rejection unhandled.
-				.catch(() => {});
-		}
+		contact_enhancements.prefill_from_contact(frm, "employee_primary_contact", {
+			first_name: "full_name",
+		});
 
 		apply_address_fallback(frm);
 	},

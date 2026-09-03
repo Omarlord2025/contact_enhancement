@@ -159,6 +159,7 @@ doc_events = {
 	"Supplier": {
 		"validate": [
 			"contact_enhancements.supplier_hooks.backfill_supplier_primary_contact_from_dynamic_link",
+			"contact_enhancements.supplier_hooks.backfill_supplier_name_from_primary_contact",
 			"contact_enhancements.supplier_hooks.sync_supplier_address_from_contact_links",
 		],
 		"on_update": "contact_enhancements.supplier_hooks.link_primary_contact",
@@ -166,6 +167,7 @@ doc_events = {
 	"Employee": {
 		"validate": [
 			"contact_enhancements.employee_hooks.sync_employee_contact_from_user",
+			"contact_enhancements.employee_hooks.backfill_employee_name_from_primary_contact",
 			"contact_enhancements.employee_hooks.sync_employee_address_from_contact_links",
 			"contact_enhancements.employee_hooks.enforce_full_name_has_at_least_three_words",
 		],
@@ -185,7 +187,10 @@ doc_events = {
 		"on_update": "contact_enhancements.contact_hooks.propagate_contact_changes_to_linked_doctypes",
 	},
 	"User": {
-		"validate": "contact_enhancements.user_hooks.validate_user_phone_before_contact_sync",
+		"validate": [
+			"contact_enhancements.user_hooks.validate_user_phone_before_contact_sync",
+			"contact_enhancements.user_hooks.backfill_user_name_from_primary_contact",
+		],
 		"on_update": "contact_enhancements.user_hooks.link_user_contact",
 	},
 }

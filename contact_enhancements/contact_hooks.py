@@ -72,7 +72,6 @@ from frappe import _
 ALEF_HAMZA_ABOVE = "أ"  # أ - not آ "آ" or إ "إ"
 PLAIN_ALEF = "ا"  # ا
 TASHKEEL_AND_TATWEEL_PATTERN = re.compile("[ً-ٰٟـ]")
-DISALLOWED_CHARACTER_PATTERN = re.compile("[^a-zA-Z؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\s]")
 WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
 WORD_INITIAL_ALEF_HAMZA_PATTERN = re.compile(r"(^|\s)" + ALEF_HAMZA_ABOVE)
 TEH_MARBUTA = "ة"  # ة
@@ -87,11 +86,44 @@ def _strip_diacritics(name):
 	return TASHKEEL_AND_TATWEEL_PATTERN.sub("", name)
 
 
+def _is_allowed_name_character(char):
+	"""Whether a character may appear in a name: any Unicode letter, or
+	whitespace.
+
+	This used to be an explicit character class of a-zA-Z plus the Arabic
+	blocks and nothing else, which silently destroyed every other script -
+	Chinese, Cyrillic, Greek, Hebrew and Japanese names were blanked
+	entirely, and accented Latin was mangled ("Muller" keeping its umlaut
+	became "M ller", "Jose" with an accent became "Jos"). Because
+	Contact.first_name is mandatory, a blanked name meant the save failed
+	outright, so a customer whose name used any of those scripts could not
+	be created at all - reported from production by another app's signup
+	flow.
+
+	str.isalpha() rather than a regex character class because Python's
+	own `re` has no Unicode property escapes (\\p{L}); isalpha() is True
+	for letters in every script and False for digits, punctuation and
+	symbols, which is exactly the rule this always meant to express.
+
+	The Arabic-specific rules elsewhere in this module (word-initial alef
+	hamza, word-final teh marbuta/yeh) are unaffected by widening this:
+	each targets specific Arabic codepoints, so they are inert on text in
+	any other script.
+
+	Args:
+		char: a single character.
+
+	Returns:
+		True if it may stay in a name.
+	"""
+	return char.isalpha() or char.isspace()
+
+
 def _strip_disallowed_characters(name):
 	"""Rule 4 normalization - replace a disallowed character (digit,
 	symbol) with a space rather than deleting it, so it can't silently
 	merge two words into one."""
-	return DISALLOWED_CHARACTER_PATTERN.sub(" ", name)
+	return "".join(char if _is_allowed_name_character(char) else " " for char in name)
 
 
 def _collapse_whitespace(name):
@@ -670,6 +702,16 @@ def enforce_unique_mobile_number(doc, method=None):
 	usually legitimate, like a shared office line); this is specifically
 	for mobiles, and it does raise.
 
+	Raises frappe.UniqueValidationError specifically, never a bare
+	frappe.ValidationError - this is a deliberate public contract, not an
+	implementation detail. Other apps on this bench create Contacts inside
+	their own flows (custom_webshop's signup, for one) and need to catch
+	"this number is taken" to recover from it, without also swallowing
+	every unrelated validation failure this app's other Contact hooks can
+	raise (a bad phone format, a name that isn't three words, a blank
+	country). A bare ValidationError forces them into a catch broad enough
+	to hide real bugs. Keep the exception type stable.
+
 	Only checks a row that's new or has a changed phone value this save -
 	the same legacy-safe gating this app already uses for
 	_resync_modified_after_side_effect_saves, so an unrelated resave of an
@@ -756,6 +798,7 @@ def enforce_unique_mobile_number(doc, method=None):
 			frappe.throw(
 				_("{0} is already used by another number row on this same Contact.").format(row.phone),
 				title=_("Duplicate Mobile Number"),
+				exc=frappe.UniqueValidationError,
 			)
 
 		conflicts = find_contacts_by_phone(row.phone, exclude=exclude)
@@ -763,6 +806,7 @@ def enforce_unique_mobile_number(doc, method=None):
 			frappe.throw(
 				_("{0} is already used by another Contact ({1}).").format(row.phone, conflicts[0]),
 				title=_("Duplicate Mobile Number"),
+				exc=frappe.UniqueValidationError,
 			)
 
 
@@ -863,16 +907,28 @@ with fetch_from where it does apply - the value it re-fetches on the
 target's own next save is already this same, freshly-pushed one.
 """
 
+# name_sync_requires: (fieldname, {values that allow the name sync}).
+# A Customer or Supplier is only the *same entity* as its primary contact
+# when it's an Individual - a Company or a Partnership has its own trading
+# name that has nothing to do with whichever person happens to be the
+# contact for it, and overwriting it with that person's name is data loss,
+# reported from production. Deliberately an allowlist ("sync only when
+# Individual") rather than a denylist ("skip when Company"): both fields
+# offer Company/Individual/Partnership, so a denylist would still clobber
+# every Partnership. Employee and User carry no such field - both are
+# always a person - so neither needs a condition.
 _CONTACT_SYNC_TARGETS = {
 	"Customer": {
 		"contact_fieldname": "customer_primary_contact",
 		"name_field": "customer_name",
+		"name_sync_requires": ("customer_type", {"Individual"}),
 		"email_field": "email_id",
 		"phone_field": "mobile_no",
 	},
 	"Supplier": {
 		"contact_fieldname": "supplier_primary_contact",
 		"name_field": "supplier_name",
+		"name_sync_requires": ("supplier_type", {"Individual"}),
 		"email_field": "email_id",
 		"phone_field": "mobile_no",
 	},
@@ -918,22 +974,48 @@ def propagate_contact_changes_to_linked_doctypes(doc, method=None):
 		return
 
 	for doctype, cfg in _CONTACT_SYNC_TARGETS.items():
-		record_names = frappe.get_all(doctype, filters={cfg["contact_fieldname"]: doc.name}, pluck="name")
-		if not record_names:
+		# The type field (if this doctype has one) is read in the same
+		# query as the names - it decides per record whether the name may
+		# be synced at all, so it can't be a separate lookup per record.
+		name_gate = cfg.get("name_sync_requires")
+		fields = ["name"] + ([name_gate[0]] if name_gate else [])
+		records = frappe.get_all(doctype, filters={cfg["contact_fieldname"]: doc.name}, fields=fields)
+		if not records:
 			continue
 
-		updates = {}
-		if changed_name and cfg.get("name_field"):
-			updates[cfg["name_field"]] = changed_name
+		# Fields that apply to every record of this doctype regardless of
+		# type - only the name is ever conditional.
+		shared_updates = {}
 		if changed_email and cfg.get("email_field"):
-			updates[cfg["email_field"]] = changed_email
+			shared_updates[cfg["email_field"]] = changed_email
 		if changed_phone and cfg.get("phone_field"):
-			updates[cfg["phone_field"]] = changed_phone
-		if not updates:
-			continue
+			shared_updates[cfg["phone_field"]] = changed_phone
 
-		for record_name in record_names:
-			_set_values_without_crashing_the_save(doctype, record_name, updates)
+		for record in records:
+			updates = dict(shared_updates)
+			if changed_name and cfg.get("name_field") and _name_sync_allowed(record, name_gate):
+				updates[cfg["name_field"]] = changed_name
+			if not updates:
+				continue
+			_set_values_without_crashing_the_save(doctype, record["name"], updates)
+
+
+def _name_sync_allowed(record, name_gate):
+	"""Whether this particular target record's own name may be overwritten
+	with its primary contact's name.
+
+	Args:
+		record: the target row, already carrying the gate's own field.
+		name_gate: (fieldname, {allowed values}) from _CONTACT_SYNC_TARGETS,
+			or None for a doctype that is always a person.
+
+	Returns:
+		True when there's no gate, or the record's value is allowed.
+	"""
+	if not name_gate:
+		return True
+	fieldname, allowed_values = name_gate
+	return record.get(fieldname) in allowed_values
 
 
 def _set_values_without_crashing_the_save(doctype, record_name, updates):

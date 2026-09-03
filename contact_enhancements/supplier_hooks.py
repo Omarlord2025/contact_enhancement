@@ -8,10 +8,24 @@ supplier_primary_contact/supplier_primary_address Link-field shape.
 
 from contact_enhancements.utils import (
 	dynamic_link_lookup,
+	backfill_name_from_primary_contact,
 	ensure_contact_linked_to_parent,
 	ensure_doc_linked_to_parent,
 	resolve_address_from_contact_links,
 )
+
+
+def backfill_supplier_name_from_primary_contact(doc, method=None):
+	"""Supplier validate hook - fill supplier_name from the primary
+	Contact's full_name when it's still blank. See
+	utils.backfill_name_from_primary_contact for why this exists alongside
+	the client-side prefill rather than instead of it.
+
+	Args:
+		doc: the Supplier being validated.
+		method: unused, present for the doc_events hook signature.
+	"""
+	backfill_name_from_primary_contact(doc, "supplier_primary_contact", "supplier_name")
 
 
 def backfill_supplier_primary_contact_from_dynamic_link(doc, method=None):

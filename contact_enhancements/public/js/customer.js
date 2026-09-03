@@ -126,8 +126,22 @@ frappe.ui.form.on("Customer", {
 					await apply_lead_snapshot(frm, snapshot);
 				}
 				await apply_address_fallback(frm);
+				// Last, so the Lead snapshot's own customer_name (a
+				// company_name, typically) always wins - this only fills
+				// customer_name if nothing else has, which for a Contact
+				// with no Lead behind it was previously nothing at all,
+				// leaving a mandatory field blank after picking a Contact.
+				await contact_enhancements.prefill_from_contact(frm, "customer_primary_contact", {
+					customer_name: "full_name",
+				});
 			},
 			error() {
+				// Still fill the name from the Contact - customer_name is
+				// mandatory, and the snapshot failing shouldn't leave the
+				// user unable to save.
+				contact_enhancements.prefill_from_contact(frm, "customer_primary_contact", {
+					customer_name: "full_name",
+				});
 				// Not fatal - contact_enhancements.customer_hooks
 				// .sync_customer_from_primary_contact re-applies the same
 				// snapshot server-side on save regardless, so this is a

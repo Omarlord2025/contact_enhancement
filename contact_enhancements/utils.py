@@ -77,32 +77,142 @@ def ensure_doc_linked_to_parent(parent_doc, fieldname, linked_doctype, linked_do
 	if not linked_name:
 		return None
 
-	if linked_doc is None:
-		# Probe with one indexed single-row read before paying for a full
-		# document load. This hook is unconditional - it runs on every
-		# save of Customer/Supplier/Employee/User - and by far the most
-		# common outcome is "the link is already there, do nothing". In
-		# that case loading the document is pure waste: a Contact costs 4
-		# SELECTs (parent + phone_nos + email_ids + links) purely to reach
-		# has_link(), which is only an in-memory loop over self.links.
-		# The filter is keyed on parent, which child tables are always
-		# indexed on, so the probe itself is cheap.
-		if dynamic_link_lookup(
-			{
-				"parenttype": linked_doctype,
-				"parent": linked_name,
-				"link_doctype": parent_doc.doctype,
-				"link_name": parent_doc.name,
-			},
-			"name",
-		):
-			return None
-		linked_doc = frappe.get_doc(linked_doctype, linked_name)
+	# Answer "is it already linked?" from whatever is cheapest. When the
+	# caller handed us the document we can read its own links table in
+	# memory; otherwise one indexed single-row read beats loading the
+	# whole document (a Contact costs 4 SELECTs - parent + phone_nos +
+	# email_ids + links - purely to reach has_link(), which is itself only
+	# an in-memory loop). This runs on every save of Customer, Supplier,
+	# Employee and User, and by far the most common answer is "yes,
+	# already linked, do nothing".
+	if linked_doc is not None:
+		already_linked = linked_doc.has_link(parent_doc.doctype, parent_doc.name)
+	else:
+		already_linked = bool(
+			dynamic_link_lookup(
+				{
+					"parenttype": linked_doctype,
+					"parent": linked_name,
+					"link_doctype": parent_doc.doctype,
+					"link_name": parent_doc.name,
+				},
+				"name",
+			)
+		)
 
-	if not linked_doc.has_link(parent_doc.doctype, parent_doc.name):
-		linked_doc.append("links", {"link_doctype": parent_doc.doctype, "link_name": parent_doc.name})
-		linked_doc.save(ignore_permissions=parent_doc.flags.ignore_permissions)
+	if already_linked:
+		return linked_doc
+
+	# Deliberately never loads the document to do this - the row is
+	# inserted directly, so the miss path costs one INSERT rather than a
+	# full document load plus a full document save. See
+	# _insert_dynamic_link for why the save had to go.
+	_insert_dynamic_link(linked_doctype, linked_name, parent_doc.doctype, parent_doc.name)
+
+	if linked_doc is not None:
+		# Keep the caller's own copy consistent with the database. Without
+		# this, a caller that later saves the document it handed us would
+		# run Frappe's own update_child_table, which DELETES child rows
+		# not present in the in-memory list - silently removing the link
+		# just inserted.
+		linked_doc.reload()
 	return linked_doc
+
+
+def backfill_name_from_primary_contact(doc, contact_fieldname, name_fieldname):
+	"""Fill a document's own name field from its primary Contact's
+	full_name, but only when that name field is still blank.
+
+	The server-side half of "picking a Contact fills in the name". The
+	client-side half (contact_enhancements.prefill_from_contact, bound to
+	each doctype's own primary-contact field) is the one that matters in
+	Desk and cannot be replaced by this: every one of these name fields is
+	mandatory, and Frappe's native client-side mandatory check runs before
+	the save request is ever dispatched, so a still-blank field never
+	reaches this hook at all (see CLAUDE.md section 1). This exists for
+	every path where no browser is involved - the REST API, Data Import,
+	another app creating records programmatically - which the client-side
+	handler can never cover.
+
+	Only ever fills a blank. Unlike
+	contact_hooks.propagate_contact_changes_to_linked_doctypes, there is no
+	Individual/Company gate here: that gate protects an existing trading
+	name from being overwritten, and a blank field has no such name to
+	lose - leaving it blank just fails the save instead.
+
+	Args:
+		doc: the document being validated.
+		contact_fieldname: its primary-contact Link field.
+		name_fieldname: the name field to fill.
+	"""
+	if doc.get(name_fieldname) or not doc.get(contact_fieldname):
+		return
+
+	full_name = frappe.db.get_value("Contact", doc.get(contact_fieldname), "full_name")
+	if full_name:
+		doc.set(name_fieldname, full_name)
+
+
+def _insert_dynamic_link(parenttype, parent, link_doctype, link_name):
+	"""Add one row to a Contact's/Address's own "links" child table by
+	inserting the child row directly, instead of appending to the parent
+	document and saving it.
+
+	This is the deadlock fix. The previous approach
+	(parent.append(...) + parent.save()) ran a full document save - child
+	table diffing, an UPDATE of the parent row, and inserts/deletes across
+	its child tables - inside another document's on_update hook. Under any
+	concurrency that is a wide, long-held lock footprint on tabContact
+	acquired in the middle of someone else's transaction, and it
+	deadlocked in practice: every QueryDeadlockError observed on this
+	bench traced into this exact save. Inserting the one row we actually
+	want touches one row in one table.
+
+	It also removes the reason _resync_modified_after_side_effect_saves
+	exists: a parent save bumped the Contact's `modified`, staling any
+	copy the caller still held (the TimestampMismatchError this app's
+	tests kept hitting). A child-row insert leaves the parent's own row,
+	and therefore its timestamp, untouched.
+
+	Two things a direct insert has to do that a parent save did for free:
+	set idx (child rows are ordered), and invalidate the parent's document
+	cache - frappe.get_cached_doc would otherwise keep handing out a
+	Contact whose links table is missing the row we just added.
+
+	NOTE: this bypasses permission checks, which parent.save() applied.
+	That is deliberate - this link is integrity metadata about a
+	relationship the parent document already established and was itself
+	permitted to create, not user-initiated editing of the Contact. The
+	practical effect is that linking now succeeds where it previously
+	raised PermissionError for a user who can create a Customer but not
+	edit the Contact they picked.
+
+	Args:
+		parenttype: "Contact" or "Address" - the document owning the table.
+		parent: that document's name.
+		link_doctype, link_name: what to link it to.
+	"""
+	next_idx = (
+		frappe.db.count(
+			"Dynamic Link",
+			{"parenttype": parenttype, "parent": parent, "parentfield": "links"},
+		)
+		or 0
+	) + 1
+
+	frappe.get_doc(
+		{
+			"doctype": "Dynamic Link",
+			"parenttype": parenttype,
+			"parent": parent,
+			"parentfield": "links",
+			"link_doctype": link_doctype,
+			"link_name": link_name,
+			"idx": next_idx,
+		}
+	).db_insert()
+
+	frappe.clear_document_cache(parenttype, parent)
 
 
 def ensure_contact_linked_to_parent(parent_doc, primary_contact_fieldname, contact=None):

@@ -130,6 +130,69 @@ class TestEnsureContactLinkedToParent(FrappeTestCase):
 		contact.reload()
 		self.assertTrue(contact.has_link("Customer", customer.name))
 
+	def test_linking_does_not_touch_the_contacts_own_modified_timestamp(self):
+		# The whole point of inserting the child row directly instead of
+		# saving the parent: a parent save bumped Contact.modified, staling
+		# every copy anyone else still held (the TimestampMismatchError
+		# this app's own tests kept hitting, and the reason
+		# _resync_modified_after_side_effect_saves exists).
+		contact = make_contact()
+		modified_before = frappe.db.get_value("Contact", contact.name, "modified")
+
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+		ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+
+		self.assertEqual(frappe.db.get_value("Contact", contact.name, "modified"), modified_before)
+		# ...and the link is genuinely there
+		self.assertTrue(frappe.get_doc("Contact", contact.name).has_link("Customer", customer.name))
+
+	def test_the_new_link_is_visible_through_the_document_cache(self):
+		# A direct child insert bypasses the ORM, so without an explicit
+		# invalidation frappe.get_cached_doc keeps serving a Contact whose
+		# links table is missing the row just added.
+		contact = make_contact()
+		customer = make_customer()
+		# Warm the cache with the pre-link version.
+		frappe.get_cached_doc("Contact", contact.name)
+
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+		ensure_contact_linked_to_parent(customer, "customer_primary_contact")
+
+		cached = frappe.get_cached_doc("Contact", contact.name)
+		self.assertTrue(cached.has_link("Customer", customer.name))
+
+	def test_the_inserted_row_gets_a_sensible_idx(self):
+		# Child rows are ordered; a parent save assigned idx for free.
+		contact = make_contact()
+		customer = make_customer(customer_primary_contact=contact.name)
+		supplier_free_contact = frappe.get_doc("Contact", contact.name)
+		idxs = [row.idx for row in supplier_free_contact.links]
+		self.assertTrue(all(isinstance(i, int) and i > 0 for i in idxs), idxs)
+		self.assertEqual(len(idxs), len(set(idxs)), f"duplicate idx values: {idxs}")
+
+	def test_a_passed_in_document_is_refreshed_so_a_later_save_keeps_the_link(self):
+		# Frappe's update_child_table deletes child rows absent from the
+		# in-memory list, so a caller that saves the document it handed us
+		# would wipe the row we inserted behind its back.
+		contact = make_contact()
+		customer = make_customer()
+		frappe.db.set_value(
+			"Customer", customer.name, "customer_primary_contact", contact.name, update_modified=False
+		)
+		customer.reload()
+
+		ensure_contact_linked_to_parent(customer, "customer_primary_contact", contact=contact)
+		contact.save(ignore_permissions=True)
+
+		self.assertTrue(frappe.get_doc("Contact", contact.name).has_link("Customer", customer.name))
+
 	def test_reuses_a_passed_in_contact_without_reloading(self):
 		# customer_primary_contact is set via a raw frappe.db.set_value,
 		# bypassing Customer's own on_update hook (which would otherwise
@@ -437,3 +500,39 @@ class TestAddressSourceLabel(FrappeTestCase):
 		# just its email, i.e. its own name) - falls back to the bare name.
 		label = address_source_label("User", "someone-else@example.com")
 		self.assertEqual(label, "via User: someone-else@example.com")
+
+
+class TestBackfillNameFromPrimaryContact(FrappeTestCase):
+	"""The server-side half of "picking a Contact fills in the name" -
+	covers every path with no browser (REST API, Data Import, another app
+	creating records), which the client-side handler can never reach."""
+
+	def test_supplier_name_is_filled_from_the_contact(self):
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		supplier = make_supplier(supplier_primary_contact=contact.name, supplier_name=None)
+		self.assertEqual(supplier.supplier_name, "Ahmed Mohamed Sabry")
+
+	def test_employee_name_is_filled_from_the_contact(self):
+		from contact_enhancements.tests.test_employee_hooks import make_employee
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		employee = make_employee(employee_primary_contact=contact.name, first_name=None)
+		self.assertEqual(employee.first_name, "Ahmed Mohamed Sabry")
+
+	def test_an_existing_name_is_never_overwritten(self):
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		contact = make_contact(first_name="Ahmed Mohamed Sabry")
+		supplier = make_supplier(
+			supplier_primary_contact=contact.name, supplier_name="Nile Parts Company"
+		)
+		self.assertEqual(supplier.supplier_name, "Nile Parts Company")
+
+	def test_is_a_noop_without_a_primary_contact(self):
+		from contact_enhancements.utils import backfill_name_from_primary_contact
+
+		doc = frappe.new_doc("Supplier")
+		backfill_name_from_primary_contact(doc, "supplier_primary_contact", "supplier_name")
+		self.assertFalse(doc.supplier_name)

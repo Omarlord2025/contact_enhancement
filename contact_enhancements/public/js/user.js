@@ -47,6 +47,16 @@ frappe.ui.form.on("User", {
 		// up set through (the onboarding dialog's own finish(), or a
 		// direct pick via the native Link dropdown).
 		render_linked_addresses(frm);
+
+		// Both are mandatory on User, and until now the ONLY thing that
+		// filled them was the onboarding dialog's own on_before_finish -
+		// so picking a Contact through the native Link dropdown instead
+		// synced nothing, leaving an unsavable form. Bound to the field
+		// itself, this now covers every path.
+		contact_enhancements.prefill_from_contact(frm, "user_primary_contact", {
+			first_name: "full_name",
+			email: "email_id",
+		});
 	},
 });
 
@@ -89,49 +99,20 @@ function show_user_onboarding_dialog(frm) {
 				frm.set_value("role_profile_name", values.role_profile);
 			}
 
-			// User's own native first_name is mandatory and separate from
-			// the Contact's own name field - confirmed live it's never
-			// otherwise filled in, leaving a new User unsavable. email is
-			// this User's own native naming field. Both need a fallback to
-			// the Contact's own data when the dialog's own fields
-			// (new_first_name on the create-new path, email on either
-			// path) don't already supply them - confirmed live: without
-			// this, picking an EXISTING Contact synced neither, since
-			// nothing else in this dialog ever reads that Contact's own
-			// full_name/email_id.
-			const need_name = !frm.doc.first_name;
-			const need_email = !frm.doc.email;
-
-			if (values.new_first_name && need_name) {
+			// Only the dialog's OWN values are applied here - they're the
+			// more specific answer, and this runs before finish() sets
+			// user_primary_contact. Falling back to the Contact's own
+			// full_name/email_id used to be a second, separate fetch right
+			// here; it now happens in the user_primary_contact field
+			// handler via the shared prefill_from_contact, which fires
+			// moments later when finish() sets that field. That covers
+			// this path and the native Link dropdown with one
+			// implementation and one round-trip instead of two.
+			if (values.new_first_name && !frm.doc.first_name) {
 				frm.set_value("first_name", values.new_first_name);
 			}
-			if (values.email && need_email) {
+			if (values.email && !frm.doc.email) {
 				frm.set_value("email", values.email);
-			}
-
-			if ((need_name && !values.new_first_name) || (need_email && !values.email)) {
-				frappe.db
-					.get_value("Contact", contact_name, ["full_name", "email_id"])
-					.then(({ message }) => {
-						if (!message) return;
-						if (need_name && !values.new_first_name && !frm.doc.first_name && message.full_name) {
-							frm.set_value("first_name", message.full_name);
-						}
-						if (need_email && !values.email && !frm.doc.email && message.email_id) {
-							frm.set_value("email", message.email_id);
-						}
-					})
-					// This is the ONLY thing filling first_name/email on the
-					// pick-an-existing-Contact path, and both are mandatory
-					// on User - a silent failure here leaves the form
-					// unsavable with no explanation of what's missing.
-					.catch(() => {
-						frappe.msgprint({
-							title: __("Could not read that Contact"),
-							message: __("Enter the Full Name and Email for this user manually."),
-							indicator: "orange",
-						});
-					});
 			}
 		},
 	});

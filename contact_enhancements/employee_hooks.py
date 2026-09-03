@@ -19,10 +19,27 @@ from frappe.contacts.doctype.contact.contact import get_contact_name
 
 from contact_enhancements.contact_hooks import validate_full_name_has_at_least_three_words
 from contact_enhancements.utils import (
+	backfill_name_from_primary_contact,
 	ensure_contact_linked_to_parent,
 	ensure_doc_linked_to_parent,
 	resolve_address_from_contact_links,
 )
+
+
+def backfill_employee_name_from_primary_contact(doc, method=None):
+	"""Employee validate hook - fill first_name (relabeled "Full Name")
+	from the primary Contact's full_name when it's still blank. See
+	utils.backfill_name_from_primary_contact.
+
+	Runs before enforce_full_name_has_at_least_three_words in the same
+	validate list, so a name filled in from the Contact is then held to
+	the same three-word rule as one typed by hand.
+
+	Args:
+		doc: the Employee being validated.
+		method: unused, present for the doc_events hook signature.
+	"""
+	backfill_name_from_primary_contact(doc, "employee_primary_contact", "first_name")
 
 
 def enforce_full_name_has_at_least_three_words(doc, method=None):
