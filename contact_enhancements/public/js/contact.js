@@ -36,12 +36,28 @@ function normalize_arabic_first_name(name) {
 	// sent, so the server-side fix never got to run - caught by a real
 	// browser test, exactly the drift this file's own header warns about.
 	// \p{L} needs the "u" flag; it is the direct JS equivalent of
-	// Python's str.isalpha().
-	const invalidCharsPattern = /[^\p{L}\s]/gu;
+	// Python's str.isalpha(). Note \w/\W would NOT work here - they stay
+	// ASCII-only even under the "u" flag, so they score every Arabic,
+	// Chinese or Cyrillic letter as a non-letter.
+	//
+	// The apostrophe and hyphen are kept: they belong inside a name
+	// (O'Brien, Anne-Marie, Al-Sayed), and treating them as symbols
+	// stored "O'Brien" as "O Brien". Mirrors contact_hooks.
+	// NAME_PUNCTUATION - keep the two in sync.
+	const invalidCharsPattern = /[^\p{L}\s'’-]/gu;
 	name = name.replace(invalidCharsPattern, " ");
 
 	// 3. Collapse any whitespace run to a single space, trim the ends.
 	name = name.replace(/\s+/g, " ").trim();
+
+	// 3b. Drop any token carrying no letter at all - only needed because
+	// step 2 now lets apostrophes and hyphens survive, so "Ahmed - Ali"
+	// would otherwise keep a bare "-" as a word. Mirrors contact_hooks.
+	// _drop_letterless_tokens.
+	name = name
+		.split(" ")
+		.filter((token) => /\p{L}/u.test(token))
+		.join(" ");
 
 	// 4. A word-initial "أ" (U+0623) becomes plain "ا" - "آ"/"إ" are untouched.
 	name = name.replace(/(^|\s)أ/g, "$1ا");

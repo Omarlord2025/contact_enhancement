@@ -277,6 +277,32 @@ class TestNameNormalizerAcceptsEveryScript(FrappeTestCase):
 		# split in half) - two different corruptions from the same rule.
 		self.assertEqual(normalize_arabic_first_name("José Müller"), "José Müller")
 
+	def test_keeps_an_apostrophe_inside_a_name(self):
+		# Stored "O Brien" before - a silently corrupted name.
+		self.assertEqual(normalize_arabic_first_name("O'Brien Sean Murphy"), "O'Brien Sean Murphy")
+
+	def test_keeps_a_typographic_apostrophe_too(self):
+		# Real input carries either form.
+		self.assertEqual(normalize_arabic_first_name("Marie O’Neill"), "Marie O’Neill")
+
+	def test_keeps_a_hyphen_inside_a_name(self):
+		self.assertEqual(normalize_arabic_first_name("Ahmed Al-Sayed Hassan"), "Ahmed Al-Sayed Hassan")
+
+	def test_a_hyphenated_given_name_stays_one_component(self):
+		# The three-word rule counts the name as typed, so this stays two
+		# components and is refused - the normalizer must not silently
+		# split it into three by turning the hyphen into a space.
+		self.assertEqual(normalize_arabic_first_name("Anne-Marie Dupont"), "Anne-Marie Dupont")
+		self.assertRaises(
+			frappe.ValidationError, validate_full_name_has_at_least_three_words, "Anne-Marie Dupont"
+		)
+
+	def test_a_stray_hyphen_between_words_is_not_kept_as_a_word(self):
+		self.assertEqual(normalize_arabic_first_name("Ahmed - Ali Hassan"), "Ahmed Ali Hassan")
+
+	def test_punctuation_only_input_normalizes_to_nothing(self):
+		self.assertEqual(normalize_arabic_first_name("'" * 3), "")
+
 	def test_still_strips_digits_and_symbols(self):
 		# Widening to "any letter" must not weaken rule 4 itself.
 		self.assertEqual(normalize_arabic_first_name("Ahmed1Ali"), "Ahmed Ali")

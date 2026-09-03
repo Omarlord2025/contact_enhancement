@@ -86,9 +86,19 @@ def _strip_diacritics(name):
 	return TASHKEEL_AND_TATWEEL_PATTERN.sub("", name)
 
 
+# Punctuation that genuinely belongs inside a name rather than being junk
+# to strip: the apostrophe in O'Brien / D'Angelo (both the ASCII and the
+# typographic form, since real input carries either) and the hyphen in
+# Anne-Marie / Al-Sayed. Treating these as symbols stored "O'Brien" as
+# "O Brien" and "Ahmed Al-Sayed" as "Ahmed Al Sayed" - a silently
+# corrupted name, reported from production.
+NAME_PUNCTUATION = frozenset("'’-")
+
+
 def _is_allowed_name_character(char):
-	"""Whether a character may appear in a name: any Unicode letter, or
-	whitespace.
+	"""Whether a character may appear in a name: any Unicode letter,
+	whitespace, or one of the intra-name punctuation marks in
+	NAME_PUNCTUATION.
 
 	This used to be an explicit character class of a-zA-Z plus the Arabic
 	blocks and nothing else, which silently destroyed every other script -
@@ -116,7 +126,7 @@ def _is_allowed_name_character(char):
 	Returns:
 		True if it may stay in a name.
 	"""
-	return char.isalpha() or char.isspace()
+	return char.isalpha() or char.isspace() or char in NAME_PUNCTUATION
 
 
 def _strip_disallowed_characters(name):
@@ -124,6 +134,25 @@ def _strip_disallowed_characters(name):
 	symbol) with a space rather than deleting it, so it can't silently
 	merge two words into one."""
 	return "".join(char if _is_allowed_name_character(char) else " " for char in name)
+
+
+def _drop_letterless_tokens(name):
+	"""Remove any whitespace-separated token that carries no letter at all.
+
+	Needed only because NAME_PUNCTUATION lets apostrophes and hyphens
+	survive rule 4: without this, input like "Ahmed - Ali" would keep a
+	bare "-" as a word of its own, and "'''" would normalize to itself
+	rather than to nothing. A token has to contain at least one letter to
+	be part of a name; punctuation belongs *inside* a component, never as
+	one.
+
+	Args:
+		name: the partially-normalized name.
+
+	Returns:
+		The name with letterless tokens removed.
+	"""
+	return " ".join(token for token in name.split() if any(char.isalpha() for char in token))
 
 
 def _collapse_whitespace(name):
@@ -168,6 +197,7 @@ def normalize_arabic_first_name(first_name):
 	name = _strip_diacritics(name)
 	name = _strip_disallowed_characters(name)
 	name = _collapse_whitespace(name)
+	name = _drop_letterless_tokens(name)
 	name = _normalize_word_initial_alef_hamza(name)
 	name = _normalize_word_final_endings(name)
 	return name
