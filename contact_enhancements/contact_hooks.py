@@ -34,14 +34,25 @@ Applied in this exact order (each step's output feeds the next):
    their own, so removing them is the correct fix, not a lossy one.
 3. No 2+ consecutive (ASCII) spaces. Normalization: collapse any run of
    whitespace to a single space, and trim the ends.
-4. Only Latin letters, Arabic-script letters (the Arabic, Arabic
-   Supplement, Arabic Extended-A, Arabic Presentation Forms-A, and Arabic
-   Presentation Forms-B Unicode blocks), and whitespace - anything else
-   (digits, symbols) is disallowed. Normalization: replace each
-   disallowed character with a space (not delete it outright) so e.g.
-   "Ahmed1Ali" becomes "Ahmed Ali" - two separate words - rather than
-   "AhmedAli" silently merging into one; the whitespace collapse in
-   rule 3 then cleans up any resulting run of spaces.
+4. Only letters (any script), combining marks, whitespace, and the
+   intra-name punctuation in NAME_PUNCTUATION (apostrophe and hyphen) -
+   anything else (digits, symbols) is disallowed. Normalization: replace
+   each disallowed character with a space (not delete it outright) so
+   e.g. "Ahmed1Ali" becomes "Ahmed Ali" - two separate words - rather
+   than "AhmedAli" silently merging into one; the whitespace collapse in
+   rule 3 then cleans up any resulting run of spaces. A token left with
+   no letter at all is then dropped entirely, so "Ahmed - Ali" does not
+   keep a bare "-" as a word.
+
+   This was once a whitelist of Latin plus the Arabic Unicode blocks and
+   nothing else, which silently destroyed every other script: Cyrillic,
+   Greek, Chinese and Hebrew names were blanked outright, accented Latin
+   was mangled ("Muller" -> "M ller"), and every script whose vowels are
+   combining marks - Devanagari, Tamil, Bengali, Thai, pointed Hebrew -
+   was reduced to its bare consonants ("राम कुमार शर्मा" -> "र म क म र
+   शर म"). Both failures were reported from production. Rule 2 above
+   still strips Arabic tashkeel by explicit codepoint range and runs
+   first, so allowing marks here does not undo it.
 5. No word may end in U+0629 (TEH MARBUTA, "ة") or U+064A (ARABIC LETTER
    YEH, "ي") specifically - not U+0649 (ALEF MAKSURA, "ى").
    Normalization: replace a word-final "ة" with "ه", and a word-final
