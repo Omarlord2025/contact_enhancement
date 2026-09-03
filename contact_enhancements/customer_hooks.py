@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 
 from contact_enhancements.api.lead_lookup import (
 	_get_contact_lead,
@@ -292,6 +293,59 @@ def _sync_whatsapp_to_customer_contact(customer, contact=None):
 	_sync_whatsapp_to_contact(contact, lead)
 	if len(contact.phone_nos) > rows_before:
 		contact.save(ignore_permissions=customer.flags.ignore_permissions)
+
+
+def enforce_primary_contact_and_address_on_new_customer(doc, method=None):
+	"""Customer validate hook - require a primary Contact and Address on a
+	Customer being created, and only then.
+
+	This replaces the `reqd=1` Property Setters these two fields used to
+	carry. The requirement itself is unchanged for new records; what
+	changed is that it can no longer reach backwards. Frappe evaluates a
+	static `reqd` on every save, not just inserts, so making these
+	mandatory retroactively froze every Customer created before this app
+	existed: a no-op re-save raised MandatoryError, which blocks not only
+	the Desk form but ERPNext's own flows, Data Import, background jobs
+	and other apps on the bench. Measured on a real dataset, most blocked
+	records had no Contact anywhere to backfill from - they were blank
+	precisely because nothing was ever linked - so a backfill patch could
+	not have rescued them either.
+
+	Runs after sync_customer_from_primary_contact in the same validate
+	list, so anything that hook can legitimately resolve (an address from
+	the Contact's other links, a Lead snapshot) has already been applied
+	and is not reported as missing.
+
+	The Desk UI reaches Save with these already filled via the mandatory
+	contact-picker dialog in public/js/customer.js, which also calls
+	frm.disable_save() until a Contact is chosen - so this throw is a
+	backstop for non-Desk paths, not the primary experience.
+
+	Args:
+		doc: the Customer being validated.
+		method: unused, present for the doc_events hook signature.
+
+	Raises:
+		frappe.ValidationError: if a new Customer has neither field set.
+	"""
+	# ignore_mandatory is Frappe's standard "skip required-field checks"
+	# escape hatch, and this IS a required-field check - honouring it keeps
+	# behaviour identical to the reqd Property Setter this replaced for
+	# every caller that already relied on it (Data Import, ERPNext's own
+	# internals, programmatic setup).
+	if not doc.is_new() or doc.flags.ignore_mandatory:
+		return
+
+	missing = [
+		doc.meta.get_label(fieldname)
+		for fieldname in ("customer_primary_contact", "customer_primary_address")
+		if not doc.get(fieldname)
+	]
+	if missing:
+		frappe.throw(
+			_("{0} is required for a new Customer.").format(", ".join(missing)),
+			title=_("Missing Primary Contact or Address"),
+		)
 
 
 def link_primary_contact(doc, method=None):

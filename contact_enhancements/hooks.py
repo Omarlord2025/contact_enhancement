@@ -153,7 +153,13 @@ after_install = "contact_enhancements.install.after_install"
 
 doc_events = {
 	"Customer": {
-		"validate": "contact_enhancements.customer_hooks.sync_customer_from_primary_contact",
+		# enforce_* runs last: sync_* may still resolve a contact/address
+		# from a Lead conversion, and that must happen before anything
+		# reports them missing.
+		"validate": [
+			"contact_enhancements.customer_hooks.sync_customer_from_primary_contact",
+			"contact_enhancements.customer_hooks.enforce_primary_contact_and_address_on_new_customer",
+		],
 		"on_update": "contact_enhancements.customer_hooks.link_primary_contact",
 	},
 	"Supplier": {
@@ -161,6 +167,8 @@ doc_events = {
 			"contact_enhancements.supplier_hooks.backfill_supplier_primary_contact_from_dynamic_link",
 			"contact_enhancements.supplier_hooks.backfill_supplier_name_from_primary_contact",
 			"contact_enhancements.supplier_hooks.sync_supplier_address_from_contact_links",
+			# Last, after the backfill above has had its chance.
+			"contact_enhancements.supplier_hooks.enforce_primary_contact_on_new_supplier",
 		],
 		"on_update": "contact_enhancements.supplier_hooks.link_primary_contact",
 	},

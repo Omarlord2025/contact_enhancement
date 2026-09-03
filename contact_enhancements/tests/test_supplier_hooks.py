@@ -174,3 +174,41 @@ class TestSupplierNativeFlows(FrappeTestCase):
 
 		supplier.reload()
 		self.assertEqual(supplier.supplier_primary_contact, contact.name)
+
+
+class TestSupplierContactRequirementIsGrandfathered(FrappeTestCase):
+	"""See TestPrimaryContactRequirementIsGrandfathered in
+	test_customer_hooks - Supplier was the worse case when this was
+	measured: nearly half of existing Suppliers would have been frozen,
+	and not one of them had a Contact that could be backfilled."""
+
+	def test_a_new_supplier_still_needs_a_contact(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Supplier",
+				"supplier_name": "Grandfather New " + frappe.generate_hash(length=6),
+				"supplier_group": frappe.db.get_value("Supplier Group", {"is_group": 0}, "name"),
+				"supplier_type": "Company",
+			}
+		)
+		with self.assertRaises(frappe.ValidationError):
+			doc.insert(ignore_permissions=True)
+
+	def test_an_existing_supplier_without_one_stays_editable(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Supplier",
+				"supplier_name": "Grandfather Legacy " + frappe.generate_hash(length=6),
+				"supplier_group": frappe.db.get_value("Supplier Group", {"is_group": 0}, "name"),
+				"supplier_type": "Company",
+			}
+		)
+		doc.flags.ignore_validate = True
+		doc.insert(ignore_permissions=True)
+
+		reloaded = frappe.get_doc("Supplier", doc.name)
+		self.assertFalse(reloaded.supplier_primary_contact)
+		reloaded.save(ignore_permissions=True)  # must not raise
+
+	def test_the_field_is_no_longer_statically_mandatory(self):
+		self.assertFalse(frappe.get_meta("Supplier").get_field("supplier_primary_contact").reqd)

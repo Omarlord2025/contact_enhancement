@@ -28,6 +28,35 @@ def _make_link_field_mandatory(doctype, fieldname):
 	)
 
 
+def _clear_link_field_mandatory(doctype, fieldname):
+	"""Remove a `reqd` Property Setter this app previously applied, so the
+	field goes back to the doctype's own default (optional).
+
+	The inverse of _make_link_field_mandatory, and the mechanism behind
+	the grandfathering decision: a static `reqd` is evaluated on *every*
+	save, not just inserts, so making these fields mandatory retroactively
+	froze every existing Customer/Supplier that had been created without
+	them - a no-op re-save failed with MandatoryError, and that blocks
+	ERPNext's own flows, imports and other apps, not just the Desk form.
+
+	The requirement itself is unchanged and still enforced, but by a
+	validate hook gated on doc.is_new() (see customer_hooks/supplier_hooks)
+	so it applies to records created from now on and cannot retroactively
+	freeze history.
+
+	Property Setter's own autoname is deterministic
+	("<doctype>-<fieldname>-reqd"), so the record can be addressed
+	directly. Safe to call when it isn't there.
+
+	Args:
+		doctype: the doctype owning the field.
+		fieldname: the field to make optional again.
+	"""
+	name = f"{doctype}-{fieldname}-reqd"
+	if frappe.db.exists("Property Setter", name):
+		frappe.delete_doc("Property Setter", name, ignore_permissions=True)
+
+
 def _disable_quick_entry(doctype):
 	"""Disable `doctype`'s own Quick Entry dialog entirely, via a Property
 	Setter on the doctype-level quick_entry property - never a client-side
@@ -91,8 +120,12 @@ def create_contact_enhancements_property_setters():
 	validate() deletes any existing one with that same key before
 	inserting - safe to call on every install/migrate.
 	"""
-	_make_link_field_mandatory("Customer", "customer_primary_contact")
-	_make_link_field_mandatory("Customer", "customer_primary_address")
+	# Deliberately NOT _make_link_field_mandatory - see
+	# _clear_link_field_mandatory for why a static reqd had to go, and
+	# customer_hooks.enforce_primary_contact_and_address_on_new_customer
+	# for where the requirement lives now.
+	_clear_link_field_mandatory("Customer", "customer_primary_contact")
+	_clear_link_field_mandatory("Customer", "customer_primary_address")
 	_disable_quick_entry("Customer")
 
 
@@ -409,7 +442,10 @@ def create_supplier_contact_property_setters():
 	unsavable until someone supplies the missing link, the same tradeoff
 	already made for Customer.
 	"""
-	_make_link_field_mandatory("Supplier", "supplier_primary_contact")
+	# See create_contact_enhancements_property_setters above - the
+	# requirement is enforced by supplier_hooks.
+	# enforce_primary_contact_on_new_supplier instead of a static reqd.
+	_clear_link_field_mandatory("Supplier", "supplier_primary_contact")
 	_disable_quick_entry("Supplier")
 
 

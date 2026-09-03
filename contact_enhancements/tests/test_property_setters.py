@@ -28,15 +28,15 @@ from contact_enhancements.tests.test_supplier_hooks import make_supplier
 
 
 class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
-	def test_makes_customer_primary_contact_mandatory(self):
+	def test_leaves_customer_primary_contact_optional_at_the_field_level(self):
 		create_contact_enhancements_property_setters()
 
-		self.assertEqual(frappe.get_meta("Customer").get_field("customer_primary_contact").reqd, 1)
+		self.assertFalse(frappe.get_meta("Customer").get_field("customer_primary_contact").reqd)
 
-	def test_makes_customer_primary_address_mandatory(self):
+	def test_leaves_customer_primary_address_optional_at_the_field_level(self):
 		create_contact_enhancements_property_setters()
 
-		self.assertEqual(frappe.get_meta("Customer").get_field("customer_primary_address").reqd, 1)
+		self.assertFalse(frappe.get_meta("Customer").get_field("customer_primary_address").reqd)
 
 	def test_disables_customer_quick_entry(self):
 		# Customer's own Quick Entry has no customer_primary_contact field
@@ -60,13 +60,13 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 			"Property Setter",
 			{"doc_type": "Customer", "field_name": "customer_primary_contact", "property": "reqd"},
 		)
-		self.assertEqual(count, 1)
+		self.assertEqual(count, 0)
 
 		address_count = frappe.db.count(
 			"Property Setter",
 			{"doc_type": "Customer", "field_name": "customer_primary_address", "property": "reqd"},
 		)
-		self.assertEqual(address_count, 1)
+		self.assertEqual(address_count, 0)
 
 		quick_entry_count = frappe.db.count(
 			"Property Setter", {"doc_type": "Customer", "property": "quick_entry"}
@@ -89,7 +89,7 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 				"customer_group": "Individual",
 			}
 		)
-		self.assertRaises(frappe.MandatoryError, customer.insert)
+		self.assertRaises(frappe.ValidationError, customer.insert)
 
 	def test_customer_cannot_be_saved_without_a_primary_address(self):
 		create_contact_enhancements_property_setters()
@@ -103,7 +103,7 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 				"customer_primary_contact": contact.name,
 			}
 		)
-		self.assertRaises(frappe.MandatoryError, customer.insert)
+		self.assertRaises(frappe.ValidationError, customer.insert)
 
 	def test_native_lead_conversion_still_works(self):
 		# erpnext's own native "Create > Customer" button on Lead
@@ -172,7 +172,7 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 		customer = _make_customer(lead.name, ignore_permissions=True)
 		customer.customer_group = "Individual"  # same unrelated site quirk as above
 
-		self.assertRaises(frappe.MandatoryError, customer.insert, ignore_permissions=True)
+		self.assertRaises(frappe.ValidationError, customer.insert, ignore_permissions=True)
 
 
 class TestCreateContactEnhancementsIndexPropertySetters(FrappeTestCase):
@@ -195,6 +195,8 @@ class TestCreateContactEnhancementsIndexPropertySetters(FrappeTestCase):
 				"Property Setter",
 				{"doc_type": "Customer", "field_name": fieldname, "property": "search_index"},
 			)
+			# Exactly one - these search_index setters are still created;
+			# only the `reqd` ones were removed by the grandfathering change.
 			self.assertEqual(count, 1)
 
 	def test_actually_creates_the_database_index_not_just_the_property(self):
@@ -292,9 +294,9 @@ class TestCreateSupplierContactPropertySetters(FrappeTestCase):
 	address stays optional, and Supplier's own native create_primary_
 	contact()/create_primary_address() become inert once this runs."""
 
-	def test_makes_supplier_primary_contact_mandatory(self):
+	def test_leaves_supplier_primary_contact_optional_at_the_field_level(self):
 		create_supplier_contact_property_setters()
-		self.assertEqual(frappe.get_meta("Supplier").get_field("supplier_primary_contact").reqd, 1)
+		self.assertFalse(frappe.get_meta("Supplier").get_field("supplier_primary_contact").reqd)
 
 	def test_leaves_supplier_primary_address_optional(self):
 		create_supplier_contact_property_setters()
@@ -312,7 +314,7 @@ class TestCreateSupplierContactPropertySetters(FrappeTestCase):
 			"Property Setter",
 			{"doc_type": "Supplier", "field_name": "supplier_primary_contact", "property": "reqd"},
 		)
-		self.assertEqual(count, 1)
+		self.assertEqual(count, 0)
 
 	def test_native_supplier_creation_still_works_with_a_primary_contact(self):
 		# Confirms the mandatory field alone doesn't break an ordinary
@@ -336,4 +338,4 @@ class TestCreateSupplierContactPropertySetters(FrappeTestCase):
 				"supplier_type": "Company",
 			}
 		)
-		self.assertRaises(frappe.MandatoryError, supplier.insert, ignore_permissions=True)
+		self.assertRaises(frappe.ValidationError, supplier.insert, ignore_permissions=True)

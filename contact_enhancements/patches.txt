@@ -44,6 +44,10 @@ contact_enhancements.patches.disable_user_quick_entry
 # on its own rather than needing a human decision first like the
 # cross-Contact case does.
 contact_enhancements.patches.dedupe_contact_phone_rows_within_contact
+# grandfather_primary_contact_requirement removes the `reqd` Property
+# Setters the two make_*_mandatory patches above applied. Must come after
+# them (it undoes their effect) and is independent of everything else.
+contact_enhancements.patches.grandfather_primary_contact_requirement
 # add_primary_contact_fan_out_indexes has no dependency on the phone-
 # uniqueness chain either - placed before add_contact_phone_unique_mobile_
 # index for the same reason as the patches above it, so it isn't blocked

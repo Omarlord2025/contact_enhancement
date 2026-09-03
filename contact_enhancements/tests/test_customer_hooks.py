@@ -611,3 +611,67 @@ class TestLinkPrimaryContact(FrappeTestCase):
 			customer_hooks_module._resync_modified_after_side_effect_saves = original_resync
 
 		self.assertEqual(resync_calls, [])
+
+
+class TestPrimaryContactRequirementIsGrandfathered(FrappeTestCase):
+	"""The requirement applies to records created from now on, never
+	retroactively. A static reqd=1 was evaluated on every save, not just
+	inserts, so it froze every Customer/Supplier that predated this app -
+	a no-op re-save raised MandatoryError, blocking ERPNext's own flows,
+	Data Import and other apps as well as the Desk form."""
+
+	def test_a_new_customer_still_needs_a_contact_and_address(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": "Grandfather New " + frappe.generate_hash(length=6),
+				"customer_type": "Individual",
+				"customer_group": "Commercial",
+				"territory": "All Territories",
+			}
+		)
+		with self.assertRaises(frappe.ValidationError):
+			doc.insert(ignore_permissions=True)
+
+	def test_an_existing_customer_without_them_stays_editable(self):
+		# Built bypassing validation, the way a pre-existing record looks.
+		name = "Grandfather Legacy " + frappe.generate_hash(length=6)
+		doc = frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": name,
+				"customer_type": "Individual",
+				"customer_group": "Commercial",
+				"territory": "All Territories",
+			}
+		)
+		doc.flags.ignore_validate = True
+		doc.insert(ignore_permissions=True)
+
+		reloaded = frappe.get_doc("Customer", doc.name)
+		self.assertFalse(reloaded.customer_primary_contact)
+		reloaded.save(ignore_permissions=True)  # must not raise
+
+	def test_the_fields_are_no_longer_statically_mandatory(self):
+		# Guards against the reqd Property Setter creeping back: it is what
+		# made the requirement retroactive in the first place.
+		meta = frappe.get_meta("Customer")
+		self.assertFalse(meta.get_field("customer_primary_contact").reqd)
+		self.assertFalse(meta.get_field("customer_primary_address").reqd)
+
+	def test_a_new_customer_with_both_set_saves_normally(self):
+		contact = make_contact()
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": frappe.generate_hash(length=10),
+				"address_type": "Billing",
+				"address_line1": "1 Grandfather Street",
+				"city": "Cairo",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+		customer = make_customer(
+			customer_primary_contact=contact.name, customer_primary_address=address.name
+		)
+		self.assertTrue(customer.name)

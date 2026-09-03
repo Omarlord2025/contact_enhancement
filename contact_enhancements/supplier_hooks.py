@@ -6,6 +6,9 @@ Customer's own hooks, since Supplier already has the same
 supplier_primary_contact/supplier_primary_address Link-field shape.
 """
 
+import frappe
+from frappe import _
+
 from contact_enhancements.utils import (
 	dynamic_link_lookup,
 	backfill_name_from_primary_contact,
@@ -95,6 +98,45 @@ def sync_supplier_address_from_contact_links(doc, method=None):
 	)
 	if address:
 		doc.supplier_primary_address = address
+
+
+def enforce_primary_contact_on_new_supplier(doc, method=None):
+	"""Supplier validate hook - require a primary Contact on a Supplier
+	being created, and only then.
+
+	Replaces the `reqd=1` Property Setter supplier_primary_contact used to
+	carry, for the same reason as the Customer equivalent - see
+	customer_hooks.enforce_primary_contact_and_address_on_new_customer for
+	the full reasoning. On the dataset this was measured against, Supplier
+	was the worse case: nearly half of existing Suppliers would have been
+	frozen, and not one of them had a Contact that could be backfilled.
+
+	supplier_primary_address is deliberately not required at all, new or
+	otherwise - unlike Customer, a Supplier has no conversion source to
+	inherit one from, and they are routinely onboarded with just a contact
+	person.
+
+	Runs last in Supplier's own validate list, after
+	backfill_supplier_primary_contact_from_dynamic_link has had its chance
+	to resolve one from an existing Dynamic Link.
+
+	Args:
+		doc: the Supplier being validated.
+		method: unused, present for the doc_events hook signature.
+
+	Raises:
+		frappe.ValidationError: if a new Supplier has no primary Contact.
+	"""
+	# See the Customer equivalent for why ignore_mandatory is honoured.
+	if not doc.is_new() or doc.flags.ignore_mandatory or doc.supplier_primary_contact:
+		return
+
+	frappe.throw(
+		_("{0} is required for a new Supplier.").format(
+			doc.meta.get_label("supplier_primary_contact")
+		),
+		title=_("Missing Primary Contact"),
+	)
 
 
 def link_primary_contact(doc, method=None):
