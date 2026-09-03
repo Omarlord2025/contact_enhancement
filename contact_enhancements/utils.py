@@ -127,6 +127,42 @@ def ensure_doc_linked_to_parent(parent_doc, fieldname, linked_doctype, linked_do
 	return linked_doc
 
 
+def party_identity_from_contact(contact_name):
+	"""What a party record (Customer, ...) should be called, and whether it
+	is a company or a person, derived from its Contact.
+
+	Contact carries a native `company_name` field. When it's filled in, the
+	Contact represents someone *at* a company, and the party being created
+	for them is that company - so the party takes the company's name and is
+	typed "Company". With it empty the Contact is just a person, and the
+	party takes their own full name as an "Individual".
+
+	This is the same rule api.lead_lookup._lead_snapshot already applies to
+	a Lead's own company_name; it simply had no equivalent for a Contact
+	that isn't attached to a Lead, so picking such a Contact produced an
+	Individual named after the person even when the Contact clearly named
+	an employer.
+
+	Args:
+		contact_name: the Contact to read.
+
+	Returns:
+		A dict {"party_name": ..., "party_type": "Company"|"Individual"},
+		or None if the Contact is missing or names nothing usable.
+	"""
+	contact = frappe.db.get_value(
+		"Contact", contact_name, ["full_name", "company_name"], as_dict=True
+	)
+	if not contact:
+		return None
+
+	if contact.company_name:
+		return {"party_name": contact.company_name, "party_type": "Company"}
+	if contact.full_name:
+		return {"party_name": contact.full_name, "party_type": "Individual"}
+	return None
+
+
 def backfill_name_from_primary_contact(doc, contact_fieldname, name_fieldname):
 	"""Fill a document's own name field from its primary Contact's
 	full_name, but only when that name field is still blank.

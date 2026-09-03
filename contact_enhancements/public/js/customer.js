@@ -126,22 +126,14 @@ frappe.ui.form.on("Customer", {
 					await apply_lead_snapshot(frm, snapshot);
 				}
 				await apply_address_fallback(frm);
-				// Last, so the Lead snapshot's own customer_name (a
-				// company_name, typically) always wins - this only fills
-				// customer_name if nothing else has, which for a Contact
-				// with no Lead behind it was previously nothing at all,
-				// leaving a mandatory field blank after picking a Contact.
-				await contact_enhancements.prefill_from_contact(frm, "customer_primary_contact", {
-					customer_name: "full_name",
-				});
+				// Last, so the Lead snapshot always wins where one exists.
+				await apply_contact_identity(frm);
 			},
 			error() {
-				// Still fill the name from the Contact - customer_name is
-				// mandatory, and the snapshot failing shouldn't leave the
-				// user unable to save.
-				contact_enhancements.prefill_from_contact(frm, "customer_primary_contact", {
-					customer_name: "full_name",
-				});
+				// Still name the Customer from the Contact - customer_name
+				// is mandatory, and the snapshot failing shouldn't leave
+				// the user unable to save.
+				apply_contact_identity(frm);
 				// Not fatal - contact_enhancements.customer_hooks
 				// .sync_customer_from_primary_contact re-applies the same
 				// snapshot server-side on save regardless, so this is a
@@ -210,6 +202,52 @@ async function apply_lead_snapshot(frm, snapshot) {
 		message: __("Prefilled from this Contact's linked Lead."),
 		indicator: "green",
 	});
+}
+
+async function apply_contact_identity(frm) {
+	// Name and type the Customer from the picked Contact. A Contact with a
+	// company_name represents someone AT a company, so the Customer being
+	// created for them is that company - it takes the company's name and
+	// customer_type "Company". With no company_name the Contact is just a
+	// person, and the Customer is an Individual named after them.
+	//
+	// Same rule the Lead snapshot already applies to a Lead's own
+	// company_name; this covers the Contact that has no Lead behind it,
+	// which previously produced an Individual named after the person even
+	// when the Contact clearly named an employer.
+	//
+	// Guarded on customer_name still being blank, which is what stops it
+	// fighting deliberate input: on the dialog's "create a new Contact"
+	// path the user has already stated Individual/Company and typed the
+	// matching name, so customer_name is set by the time this runs and
+	// nothing here fires. customer_type is only ever set alongside a name
+	// this function is itself supplying.
+	if (!frm.doc.customer_primary_contact || frm.doc.customer_name) return;
+
+	let r;
+	try {
+		r = await frappe.db.get_value("Contact", frm.doc.customer_primary_contact, [
+			"full_name",
+			"company_name",
+		]);
+	} catch (e) {
+		return;
+	}
+	const contact = r && r.message;
+	if (!contact || frm.doc.customer_name) return;
+
+	// customer_type is set in BOTH branches, not just the company one:
+	// it carries a DocField default of "Company", so leaving it alone for
+	// a person-only Contact produced a "Company" Customer named after a
+	// human - the exact shape the propagation rules refuse to sync,
+	// because a company's trading name is not its contact's name.
+	if (contact.company_name) {
+		await frm.set_value("customer_type", "Company");
+		await frm.set_value("customer_name", contact.company_name);
+	} else if (contact.full_name) {
+		await frm.set_value("customer_type", "Individual");
+		await frm.set_value("customer_name", contact.full_name);
+	}
 }
 
 async function apply_address_fallback(frm) {

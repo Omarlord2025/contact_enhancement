@@ -153,6 +153,10 @@ after_install = "contact_enhancements.install.after_install"
 
 doc_events = {
 	"Customer": {
+		# before_naming, not validate: ERPNext's own Customer.autoname()
+		# reads customer_name, and naming runs before validate - so a
+		# validate-time backfill is too late on an insert.
+		"before_naming": "contact_enhancements.customer_hooks.apply_contact_identity_before_naming",
 		# enforce_* runs last: sync_* may still resolve a contact/address
 		# from a Lead conversion, and that must happen before anything
 		# reports them missing.

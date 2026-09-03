@@ -675,3 +675,84 @@ class TestPrimaryContactRequirementIsGrandfathered(FrappeTestCase):
 			customer_primary_contact=contact.name, customer_primary_address=address.name
 		)
 		self.assertTrue(customer.name)
+
+
+class TestCustomerIdentityFromContactCompanyName(FrappeTestCase):
+	"""A Contact with a company_name represents someone AT a company, so
+	the Customer created for them is that company - not a person named
+	after the contact. The Lead snapshot already applied this rule to a
+	Lead's own company_name; a Contact with no Lead behind it had no
+	equivalent."""
+
+	def test_a_contact_with_a_company_name_produces_a_company_customer(self):
+		contact = make_contact(first_name="Omar Ahmed Sabry")
+		frappe.db.set_value("Contact", contact.name, "company_name", "Acme Trading Co")
+
+		customer = frappe.new_doc("Customer")
+		customer.customer_primary_contact = contact.name
+		sync_customer_from_primary_contact(customer)
+
+		self.assertEqual(customer.customer_name, "Acme Trading Co")
+		self.assertEqual(customer.customer_type, "Company")
+
+	def test_a_contact_without_one_produces_an_individual(self):
+		contact = make_contact(first_name="Omar Ahmed Sabry")
+
+		customer = frappe.new_doc("Customer")
+		customer.customer_primary_contact = contact.name
+		sync_customer_from_primary_contact(customer)
+
+		self.assertEqual(customer.customer_name, "Omar Ahmed Sabry")
+		self.assertEqual(customer.customer_type, "Individual")
+
+	def test_a_name_already_chosen_is_never_overwritten(self):
+		# The guard that keeps this from fighting the dialog's own
+		# "create a new Contact" path, where the user has already stated
+		# Individual/Company and typed the matching name.
+		contact = make_contact(first_name="Omar Ahmed Sabry")
+		frappe.db.set_value("Contact", contact.name, "company_name", "Acme Trading Co")
+
+		customer = frappe.new_doc("Customer")
+		customer.customer_primary_contact = contact.name
+		customer.customer_name = "Deliberately Chosen Name"
+		customer.customer_type = "Individual"
+		sync_customer_from_primary_contact(customer)
+
+		self.assertEqual(customer.customer_name, "Deliberately Chosen Name")
+		self.assertEqual(customer.customer_type, "Individual")
+
+	def test_the_lead_snapshot_still_wins_when_there_is_one(self):
+		lead = make_lead(company_name="Lead Company Ltd")
+		contact_name = lead_contact_name(lead.name)
+		frappe.db.set_value("Contact", contact_name, "company_name", "Contact Company Co")
+
+		customer = frappe.new_doc("Customer")
+		customer.customer_primary_contact = contact_name
+		sync_customer_from_primary_contact(customer)
+
+		self.assertEqual(customer.customer_name, "Lead Company Ltd")
+		self.assertEqual(customer.customer_type, "Company")
+
+	def test_it_saves_end_to_end_as_a_company(self):
+		contact = make_contact(first_name="Omar Ahmed Sabry")
+		frappe.db.set_value("Contact", contact.name, "company_name", "Acme End To End")
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": frappe.generate_hash(length=10),
+				"address_type": "Billing",
+				"address_line1": "1 Company Street",
+				"city": "Cairo",
+				"country": "Egypt",
+			}
+		).insert(ignore_permissions=True)
+
+		customer = frappe.new_doc("Customer")
+		customer.customer_primary_contact = contact.name
+		customer.customer_primary_address = address.name
+		customer.customer_group = "Commercial"
+		customer.territory = "All Territories"
+		customer.insert(ignore_permissions=True)
+
+		self.assertEqual(customer.customer_name, "Acme End To End")
+		self.assertEqual(customer.customer_type, "Company")

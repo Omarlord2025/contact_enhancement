@@ -11,6 +11,7 @@ from contact_enhancements.api.lead_lookup import (
 )
 from contact_enhancements.utils import (
 	ensure_contact_linked_to_parent,
+	party_identity_from_contact,
 	ensure_doc_linked_to_parent,
 	resolve_address_from_contact_links,
 )
@@ -196,6 +197,11 @@ def sync_customer_from_primary_contact(doc, method=None):
 
 	lead_name = _get_contact_lead(doc.customer_primary_contact)
 	if not lead_name:
+		# No Lead behind this Contact, so there's no snapshot to apply -
+		# but the Contact itself still says who this Customer is. A Contact
+		# with a company_name represents someone at a company, and the
+		# Customer being created for them is that company.
+		_apply_contact_identity(doc)
 		return
 
 	snapshot = _lead_snapshot(lead_name)
@@ -293,6 +299,57 @@ def _sync_whatsapp_to_customer_contact(customer, contact=None):
 	_sync_whatsapp_to_contact(contact, lead)
 	if len(contact.phone_nos) > rows_before:
 		contact.save(ignore_permissions=customer.flags.ignore_permissions)
+
+
+def apply_contact_identity_before_naming(doc, method=None):
+	"""Customer before_naming hook - name and type the Customer from its
+	primary Contact before ERPNext's own autoname reads customer_name.
+
+	Registered on before_naming, not validate, because ERPNext's
+	Customer.autoname() calls self.customer_name.strip() and
+	frappe.model.naming.set_new_name() runs the whole naming step *before*
+	run_before_save_methods() - so a validate-time backfill is too late on
+	an insert and the document dies with AttributeError on None first.
+	before_naming goes through run_method(), so doc_events reach it like
+	any other event.
+
+	Args:
+		doc: the Customer being named.
+		method: unused, present for the doc_events hook signature.
+	"""
+	_apply_contact_identity(doc)
+
+
+def _apply_contact_identity(doc):
+	"""Name and type this Customer from its primary Contact, when nothing
+	else already has.
+
+	The Lead snapshot above is the richer source and wins whenever a Lead
+	exists; this covers the far more common case of a Contact with no Lead
+	behind it at all, which previously left customer_name blank (a
+	mandatory field) and customer_type at whatever default happened to be
+	sitting there.
+
+	Only ever applies when customer_name is still blank. That single guard
+	is what keeps it from fighting deliberate input: on the dialog's
+	"create a new Contact" path the user has already stated Individual or
+	Company and typed the matching name, so customer_name is set by the
+	time this runs and nothing here touches it. customer_type is only
+	corrected alongside a name this function is itself supplying - never on
+	its own, and never over a name someone chose.
+
+	Args:
+		doc: the Customer being validated.
+	"""
+	if doc.customer_name or not doc.customer_primary_contact:
+		return
+
+	identity = party_identity_from_contact(doc.customer_primary_contact)
+	if not identity:
+		return
+
+	doc.customer_name = identity["party_name"]
+	doc.customer_type = identity["party_type"]
 
 
 def enforce_primary_contact_and_address_on_new_customer(doc, method=None):
