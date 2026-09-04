@@ -53,6 +53,10 @@ contact_enhancements.patches.grandfather_primary_contact_requirement
 # index for the same reason as the patches above it, so it isn't blocked
 # by that patch's own expected abort.
 contact_enhancements.patches.add_primary_contact_fan_out_indexes
+# Indexes Contact.full_name for the dialog's live duplicate-name lookup -
+# an anchored prefix match, which unlike the general search an index can
+# actually serve.
+contact_enhancements.patches.add_contact_name_search_index
 # add_transaction_contact_person_indexes is also independent of the
 # phone-uniqueness chain. NOTE: its ALTER TABLEs run against the largest
 # tables in an ERPNext site and are not instant on real data - run the

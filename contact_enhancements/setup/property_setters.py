@@ -334,6 +334,35 @@ def create_transaction_contact_person_indexes():
 		frappe.db.updatedb(doctype)
 
 
+def create_contact_name_search_index():
+	"""Index Contact.full_name for the duplicate-name lookup behind the
+	contact-picker dialog (api.contact_lookup.search_contacts_by_name_prefix).
+
+	Worth adding here where it was deliberately NOT worth adding for the
+	general contact search: that one matches mid-string
+	(full_name LIKE "%txt%"), which a B-tree index cannot serve at all -
+	see create_contact_enhancements_index_property_setters's own docstring.
+	The duplicate-name lookup is an ANCHORED prefix match
+	(full_name LIKE "txt%"), which is exactly the shape an index does
+	serve, and it runs on every keystroke pause while someone types a name
+	into the dialog.
+
+	Same frappe.db.updatedb() requirement as every other schema-affecting
+	Property Setter in this app - setting the property alone does not alter
+	the table.
+	"""
+	frappe.make_property_setter(
+		{
+			"doctype": "Contact",
+			"fieldname": "full_name",
+			"property": "search_index",
+			"value": "1",
+			"property_type": "Check",
+		}
+	)
+	frappe.db.updatedb("Contact")
+
+
 def create_contact_full_name_property_setters():
 	"""Relabel Contact.first_name to "Full Name" (Phase 0e) - the practical
 	pattern already in use everywhere a Contact gets created through this

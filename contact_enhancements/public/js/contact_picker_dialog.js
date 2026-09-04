@@ -149,6 +149,12 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 			// relabeled Property Setter (Phase 0e). Fieldname stays
 			// new_first_name; only the label changes.
 			{ fieldtype: "Data", fieldname: "new_first_name", label: __("Full Name") },
+			// Live "this person may already exist" list, fed by the name
+			// being typed just above. Placed here - before the caller's own
+			// extra_dialog_fields spread - so it always renders directly
+			// under the name input regardless of which doctype opened the
+			// dialog. Same bare-HTML-field pattern as `results` above.
+			{ fieldtype: "HTML", fieldname: "name_matches" },
 			...(config.extra_dialog_fields || []),
 		],
 		primary_action_label: __("Create New Contact"),
@@ -346,6 +352,108 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 	}, 300);
 
 	dialog.fields_dict.phone.$input.on("input", (e) => search(e.target.value));
+
+	// ---- "this person may already exist" - matching on the NAME ----
+	//
+	// Phone-based duplicate detection cannot catch the case that matters
+	// most here: the same person coming back and being entered again with a
+	// DIFFERENT number. Nothing about the two records matches on phone, but
+	// the name usually does. So as the name is typed, show anyone already
+	// on file whose name starts with the same components, with their
+	// numbers, so the person entering data can recognise them.
+	//
+	// Informational, never blocking - it does not gate the create button.
+	const $name_matches = dialog.fields_dict.name_matches.$wrapper;
+
+	function render_name_matches(matches, typed_name) {
+		if (!matches.length) {
+			$name_matches.empty();
+			return;
+		}
+		const esc = frappe.utils.escape_html;
+		const rows = matches
+			.map((match) => {
+				const full_name = esc(match.full_name || match.name);
+				const detail = [match.company_name, match.designation]
+					.filter(Boolean)
+					.map(esc)
+					.join(" — ");
+				const phones = (match.phones || [])
+					.map((row) => {
+						const channels =
+							row.channels && row.channels.length
+								? ` (${row.channels.map(esc).join(", ")})`
+								: "";
+						return `<div>${esc(row.phone)}${channels}</div>`;
+					})
+					.join("");
+				const no_phone = (match.phones || []).length
+					? ""
+					: `<div class="text-muted">${__("No number on file")}</div>`;
+				return `
+					<div class="existing-person-row" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color);">
+						<div>
+							<b>${full_name}</b>
+							<div class="text-muted">${detail ? `<div>${detail}</div>` : ""}${phones}${no_phone}</div>
+						</div>
+						<button class="btn btn-xs btn-default open-existing-contact-btn" data-name="${esc(match.name)}">${__("Open & Add Number")}</button>
+					</div>`;
+			})
+			.join("");
+
+		$name_matches.html(`
+			<div style="margin-top: 8px;">
+				<div class="text-muted" style="margin-bottom: 4px;">
+					${__("Someone with this name is already on file — check before creating a new person:")}
+				</div>
+				${rows}
+			</div>`);
+	}
+
+	// Its own delegated handler on its own wrapper: the phone results
+	// handler above is bound to the `results` wrapper specifically, so it
+	// would never see clicks in here even with the same class.
+	$name_matches.on("click", ".open-existing-contact-btn", function () {
+		const contact_name = $(this).attr("data-name");
+		const values = get_values_ignoring_missing() || {};
+		// Hand the typed number to the Contact form, which stages it as an
+		// unsaved row for the user to check and save. Set BEFORE routing:
+		// frappe.set_route is client-side navigation, so this survives.
+		contact_enhancements.pending_contact_phone = values.phone
+			? { contact: contact_name, phone: values.phone, country: values.country }
+			: null;
+		dialog.hide();
+		frappe.set_route("Form", "Contact", contact_name);
+	});
+
+	let latest_name_search = 0;
+
+	const search_by_name = frappe.utils.debounce((txt) => {
+		if (!txt || txt.trim().length < 3) {
+			latest_name_search++; // cancel any in-flight response
+			$name_matches.empty();
+			return;
+		}
+		const search_id = ++latest_name_search;
+		frappe.call({
+			method: "contact_enhancements.api.contact_lookup.search_contacts_by_name_prefix",
+			args: { txt, page_len: 10 },
+			callback(r) {
+				if (search_id !== latest_name_search) return; // superseded
+				render_name_matches(r.message || [], txt);
+			},
+			error() {
+				if (search_id !== latest_name_search) return; // superseded
+				// Silent: this is a helpful extra, not something the user
+				// asked for, so a failure should never interrupt them
+				// mid-name. The phone search above shows an inline message
+				// because the user explicitly typed a query there.
+				$name_matches.empty();
+			},
+		});
+	}, 300);
+
+	dialog.fields_dict.new_first_name.$input.on("input", (e) => search_by_name(e.target.value));
 
 	if (config.on_dialog_ready) {
 		config.on_dialog_ready(dialog);

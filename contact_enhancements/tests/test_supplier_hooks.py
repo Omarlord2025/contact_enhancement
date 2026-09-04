@@ -14,6 +14,12 @@ from contact_enhancements.tests.test_customer_hooks import make_customer
 from contact_enhancements.tests.test_lead_lookup import make_contact
 
 
+def _letters_token():
+	"""Unique token with no digits - digits are stripped from names by this
+	app's own rules, so a hex token does not survive a save."""
+	return "".join("abcdefghij"[int(c, 16) % 10] for c in frappe.generate_hash(length=8))
+
+
 def make_supplier(**kwargs):
 	supplier = frappe.get_doc(
 		{
@@ -229,9 +235,11 @@ class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
 		return supplier
 
 	def test_a_contact_with_a_company_name_names_the_supplier_after_it(self):
-		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		# Letters only: digits are stripped from names, and full_name now
+		# correctly reflects that - a hex token would not survive the save.
+		person = "Omar Ahmed " + _letters_token()
 		contact = make_contact(first_name=person)
-		company = "Nile Parts " + frappe.generate_hash(length=6)
+		company = "Nile Parts " + _letters_token()
 		frappe.db.set_value("Contact", contact.name, "company_name", company)
 
 		supplier = self._new_supplier(contact.name)
@@ -240,7 +248,9 @@ class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
 		self.assertEqual(supplier.supplier_type, "Company")
 
 	def test_a_contact_without_one_names_it_after_the_person(self):
-		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		# Letters only: digits are stripped from names, and full_name now
+		# correctly reflects that - a hex token would not survive the save.
+		person = "Omar Ahmed " + _letters_token()
 		contact = make_contact(first_name=person)
 
 		supplier = self._new_supplier(contact.name)
@@ -252,9 +262,11 @@ class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
 
 	def test_a_deliberate_partnership_choice_is_never_overridden(self):
 		# The reason this is more conservative than Customer's equivalent.
-		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		# Letters only: digits are stripped from names, and full_name now
+		# correctly reflects that - a hex token would not survive the save.
+		person = "Omar Ahmed " + _letters_token()
 		contact = make_contact(first_name=person)
-		company = "Nile Partners " + frappe.generate_hash(length=6)
+		company = "Nile Partners " + _letters_token()
 		frappe.db.set_value("Contact", contact.name, "company_name", company)
 
 		supplier = self._new_supplier(contact.name, supplier_type="Partnership")
@@ -263,9 +275,11 @@ class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
 		self.assertEqual(supplier.supplier_type, "Partnership")
 
 	def test_a_deliberate_individual_choice_is_never_overridden(self):
-		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		# Letters only: digits are stripped from names, and full_name now
+		# correctly reflects that - a hex token would not survive the save.
+		person = "Omar Ahmed " + _letters_token()
 		contact = make_contact(first_name=person)
-		company = "Nile Parts " + frappe.generate_hash(length=6)
+		company = "Nile Parts " + _letters_token()
 		frappe.db.set_value("Contact", contact.name, "company_name", company)
 
 		supplier = self._new_supplier(contact.name, supplier_type="Individual")
@@ -274,9 +288,11 @@ class TestSupplierIdentityFromContactCompanyName(FrappeTestCase):
 		self.assertEqual(supplier.supplier_type, "Individual")
 
 	def test_a_name_already_chosen_is_never_overwritten(self):
-		person = "Omar Ahmed " + frappe.generate_hash(length=6)
+		# Letters only: digits are stripped from names, and full_name now
+		# correctly reflects that - a hex token would not survive the save.
+		person = "Omar Ahmed " + _letters_token()
 		contact = make_contact(first_name=person)
-		company = "Nile Parts " + frappe.generate_hash(length=6)
+		company = "Nile Parts " + _letters_token()
 		frappe.db.set_value("Contact", contact.name, "company_name", company)
 
 		supplier = frappe.new_doc("Supplier")

@@ -8,6 +8,8 @@ from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.api import contact_lookup as contact_lookup_module
 from contact_enhancements.api.contact_lookup import (
+	name_prefix_key,
+	search_contacts_by_name_prefix,
 	create_minimal_contact,
 	escape_like_wildcards,
 	get_address_from_contact_links,
@@ -384,3 +386,117 @@ class TestSearchPageLenIsBounded(FrappeTestCase):
 			contact_lookup_module._contact_search_query = original
 
 		self.assertEqual(captured["page_len"], 10)
+
+
+def _letters_token():
+	"""A unique token containing only letters.
+
+	frappe.generate_hash returns hex, and digits are deliberately stripped
+	from names by this app's own rules - so a hash used inside a test name
+	does not survive the save, and the fixture stops matching itself.
+	"""
+	return "".join("abcdefghij"[int(c, 16) % 10] for c in frappe.generate_hash(length=8))
+
+
+class TestNamePrefixKey(FrappeTestCase):
+	"""The prefix a typed name is matched against - normalized so typed
+	text is compared in the form the database stores, and capped at three
+	components so matching works in both directions."""
+
+	def test_short_input_is_not_searchable(self):
+		self.assertIsNone(name_prefix_key("ab"))
+		self.assertIsNone(name_prefix_key(""))
+		self.assertIsNone(name_prefix_key(None))
+
+	def test_uses_what_is_typed_while_it_is_short(self):
+		self.assertEqual(name_prefix_key("Ahmed"), "Ahmed")
+		self.assertEqual(name_prefix_key("Ahmed Sabry"), "Ahmed Sabry")
+
+	def test_caps_at_three_components(self):
+		# This is what makes a 4-component name still find the 3-component
+		# record, not just the other way round.
+		self.assertEqual(name_prefix_key("Ahmed Sabry Amin Hassan"), "Ahmed Sabry Amin")
+
+	def test_normalizes_arabic_so_typed_text_matches_stored_text(self):
+		# Stored names have been through the same normalizer, so without
+		# this a typed hamza would never match anything.
+		self.assertEqual(name_prefix_key("أحمد"), "احمد")
+
+	def test_ignores_surrounding_whitespace(self):
+		self.assertEqual(name_prefix_key("  Ahmed Sabry  "), "Ahmed Sabry")
+
+
+class TestSearchContactsByNamePrefix(FrappeTestCase):
+	"""The duplicate-person lookup: catches the case phone matching cannot -
+	the same person returning with a DIFFERENT number."""
+
+	def test_finds_an_exact_name_match(self):
+		unique = _letters_token()
+		make_contact(first_name=f"Omar {unique} Sabry")
+
+		matches = search_contacts_by_name_prefix(f"Omar {unique} Sabry")
+
+		self.assertEqual([m["full_name"] for m in matches], [f"Omar {unique} Sabry"])
+
+	def test_finds_a_longer_name_that_starts_the_same(self):
+		# The "may be a fourth name" case.
+		unique = _letters_token()
+		make_contact(first_name=f"Omar {unique} Sabry Hassan")
+
+		matches = search_contacts_by_name_prefix(f"Omar {unique} Sabry")
+
+		self.assertIn(f"Omar {unique} Sabry Hassan", [m["full_name"] for m in matches])
+
+	def test_a_longer_typed_name_still_finds_the_shorter_record(self):
+		# The reverse direction, which a plain prefix of the typed text
+		# would miss - this is why the key is capped at three components.
+		unique = _letters_token()
+		make_contact(first_name=f"Omar {unique} Sabry")
+
+		matches = search_contacts_by_name_prefix(f"Omar {unique} Sabry Hassan")
+
+		self.assertIn(f"Omar {unique} Sabry", [m["full_name"] for m in matches])
+
+	def test_returns_the_phone_numbers_of_each_match(self):
+		# The whole point: seeing their numbers is how a person is
+		# recognised as someone already on file.
+		unique = _letters_token()
+		contact = make_contact(first_name=f"Omar {unique} Sabry", phone_nos=["01099744001"])
+
+		matches = search_contacts_by_name_prefix(f"Omar {unique} Sabry")
+
+		match = next(m for m in matches if m["name"] == contact.name)
+		self.assertEqual([p["phone"] for p in match["phones"]], ["+201099744001"])
+
+	def test_does_not_match_an_unrelated_name(self):
+		unique = _letters_token()
+		make_contact(first_name=f"Omar {unique} Sabry")
+
+		matches = search_contacts_by_name_prefix(f"Kareem {unique} Fouad")
+
+		self.assertEqual(matches, [])
+
+	def test_matches_a_differently_written_arabic_name(self):
+		# Typed with hamza, stored normalized without it.
+		unique = _letters_token()
+		make_contact(first_name=f"أحمد محمد {unique}")
+
+		matches = search_contacts_by_name_prefix(f"أحمد محمد {unique}")
+
+		self.assertTrue(matches, "a hamza-typed name should find its normalized stored form")
+
+	def test_returns_nothing_for_too_short_input(self):
+		self.assertEqual(search_contacts_by_name_prefix("ab"), [])
+
+	def test_a_typed_wildcard_is_literal(self):
+		make_contact(first_name="Wildcard Name Probe")
+		self.assertEqual(search_contacts_by_name_prefix("%"), [])
+
+	def test_page_len_is_bounded(self):
+		from contact_enhancements.api.contact_lookup import MAX_SEARCH_PAGE_LEN
+
+		unique = _letters_token()
+		make_contact(first_name=f"Bounded {unique} Person")
+		# Must not raise, and must not honour an absurd page size.
+		matches = search_contacts_by_name_prefix(f"Bounded {unique}", page_len=1000000)
+		self.assertLessEqual(len(matches), MAX_SEARCH_PAGE_LEN)

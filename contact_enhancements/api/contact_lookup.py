@@ -306,10 +306,35 @@ def search_contacts_with_details(txt, start=0, page_len=10):
 		contact.email_id,
 	).run(as_dict=True)
 
+	return _attach_phones(matches)
+
+
+def _attach_phones(matches):
+	"""Graft every match's own phone numbers onto it, in one batched read.
+
+	Shared by search_contacts_with_details and
+	search_contacts_by_name_prefix so both return the identical match
+	shape - the contact-picker dialog renders them with the same code.
+
+	Kept as a second query rather than a GROUP_CONCAT for the reason given
+	in search_contacts_with_details's own docstring: packing numbers plus
+	three boolean channel flags into one aggregated string would need an ad
+	hoc encode/decode scheme, and the equivalent function varies by
+	database backend.
+
+	Args:
+		matches: list of match dicts, each carrying at least "name".
+
+	Returns:
+		The same list, each entry given a "phones" key: a list of
+		{"phone": ..., "channels": [...]} for every number that Contact
+		has (not only one that matched).
+	"""
 	if not matches:
 		return []
 
-	contact_names = [match.name for match in matches]
+	contact_phone = frappe.qb.DocType("Contact Phone")
+	contact_names = [match["name"] for match in matches]
 	phone_rows = (
 		frappe.qb.from_(contact_phone)
 		.select(
@@ -329,8 +354,100 @@ def search_contacts_with_details(txt, start=0, page_len=10):
 		)
 
 	for match in matches:
-		match["phones"] = phones_by_contact.get(match.name, [])
+		match["phones"] = phones_by_contact.get(match["name"], [])
 	return matches
+
+
+# How many leading name components identify "the same person" for the
+# duplicate-name lookup. Three, because this app already requires a name to
+# have at least three parts (first, father's, family) - see
+# contact_hooks.validate_full_name_has_at_least_three_words.
+NAME_PREFIX_COMPONENTS = 3
+
+# Below this many characters a prefix matches too much of the table to be
+# worth showing, and the user is still typing their first word.
+MIN_NAME_PREFIX_LENGTH = 3
+
+
+def name_prefix_key(txt):
+	"""The prefix a typed name should be matched against.
+
+	Two things happen here, and both matter:
+
+	1. The text is run through this app's own name normalization, so what
+	   the user types is compared in the same form the database stores.
+	   Without it a typed "أحمد" would never match a stored "احمد" - the
+	   normalizer rewrites word-initial alef-hamza, strips tashkeel, and
+	   folds word-final teh-marbuta/yeh, so raw typed text and stored text
+	   are simply different strings for a large share of Arabic names.
+
+	2. It is capped at NAME_PREFIX_COMPONENTS. That is what makes the
+	   match work in BOTH directions: typing "Ahmed Sabry Amin" finds the
+	   longer "Ahmed Sabry Amin Hassan", and typing that longer name still
+	   finds the shorter "Ahmed Sabry Amin", because both queries reduce to
+	   the same three-component prefix. A plain prefix of the full typed
+	   text would only ever find longer names.
+
+	Args:
+		txt: the name as typed so far.
+
+	Returns:
+		The prefix to match with, or None if there isn't enough to search.
+	"""
+	from contact_enhancements.contact_hooks import normalize_arabic_first_name
+
+	normalized = normalize_arabic_first_name((txt or "").strip())
+	if not normalized or len(normalized) < MIN_NAME_PREFIX_LENGTH:
+		return None
+	return " ".join(normalized.split()[:NAME_PREFIX_COMPONENTS])
+
+
+@frappe.whitelist()
+def search_contacts_by_name_prefix(txt, page_len=10):
+	"""Contacts whose name starts with the same components as `txt` - the
+	"this person may already exist" lookup behind the contact-picker
+	dialog's live duplicate-name list.
+
+	Exists because phone-based duplicate detection cannot catch the case
+	this app most needs to catch: the same person coming back and being
+	entered again with a DIFFERENT phone number. Nothing about the two
+	records matches on phone, but the name usually does.
+
+	Unlike search_contacts_with_details, this is an ANCHORED prefix match
+	on full_name alone. That matters twice over: it is the semantics the
+	feature actually wants (same name, or same name plus a fourth), and a
+	leading-anchored LIKE is one of the few this app can serve from a
+	B-tree index - hence the search_index on Contact.full_name added
+	alongside it. The general search deliberately cannot use an index,
+	because it matches mid-string and ORs across email and phone columns
+	too, which would also drag in Contacts that merely share a phone
+	fragment.
+
+	Args:
+		txt: the name as typed so far.
+		page_len: maximum matches to return (bounded like every other
+			whitelisted search here).
+
+	Returns:
+		A list of match dicts in exactly the shape
+		search_contacts_with_details returns - name, full_name,
+		company_name, designation, email_id, phones - so the dialog can
+		render both lists with the same code. Empty when there isn't
+		enough typed to search on.
+	"""
+	prefix = name_prefix_key(txt)
+	if not prefix:
+		return []
+
+	page_len = min(max(frappe.utils.cint(page_len) or 10, 1), MAX_SEARCH_PAGE_LEN)
+	matches = frappe.get_all(
+		"Contact",
+		filters={"full_name": ["like", f"{escape_like_wildcards(prefix)}%"]},
+		fields=["name", "full_name", "company_name", "designation", "email_id"],
+		order_by="modified desc",
+		limit_page_length=page_len,
+	)
+	return _attach_phones(matches)
 
 
 @frappe.whitelist()

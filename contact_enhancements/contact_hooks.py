@@ -242,11 +242,32 @@ def normalize_contact_first_name(doc, method=None):
 	validate hook is the only place that also covers the REST API and
 	Data Import, which never run form JS at all.
 
+	Recomputes full_name afterwards, and that is not optional. Frappe's own
+	Contact.validate() sets full_name from first/middle/last BEFORE this
+	hook runs - the controller's own validate() always precedes any
+	doc_events-registered hook for the same event (Document.hook's
+	compose()) - so normalizing first_name here left full_name holding the
+	pre-normalization text. The two fields then disagreed permanently: a
+	Contact typed "أحمد محمد على" stored first_name "احمد محمد على" and
+	full_name "أحمد محمد على".
+
+	That is not cosmetic. full_name is what this app searches on, what it
+	names a Customer/Supplier from (utils.party_identity_from_contact), and
+	what propagate_contact_changes_to_linked_doctypes pushes out to every
+	linked record - so the un-normalized form was the one that travelled.
+	It also silently broke the duplicate-name lookup, which compares
+	normalized typed text against stored full_name and could never match.
+
+	Exactly the same failure mode as the stale doc.mobile_no this module
+	already re-syncs at the end of normalize_and_validate_contact_phones,
+	and for exactly the same ordering reason.
+
 	Args:
 		doc: the Contact document being validated.
 		method: unused, present for the doc_events hook signature.
 	"""
 	doc.first_name = normalize_arabic_first_name(doc.first_name)
+	doc.full_name = doc._get_full_name()
 
 
 def validate_full_name_has_at_least_three_words(full_name):

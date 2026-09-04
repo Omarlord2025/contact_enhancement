@@ -7,6 +7,7 @@ from contact_enhancements.setup.property_setters import (
 	create_contact_enhancements_index_property_setters,
 	create_contact_enhancements_property_setters,
 	create_contact_full_name_property_setters,
+	create_contact_name_search_index,
 	create_contact_phone_hidden_field_property_setters,
 	create_employee_full_name_property_setters,
 	create_supplier_contact_property_setters,
@@ -20,6 +21,7 @@ def after_install():
 	create_contact_enhancements_index_property_setters()
 	create_contact_dedupe_index_property_setters()
 	create_contact_full_name_property_setters()
+	create_contact_name_search_index()
 	create_contact_phone_hidden_field_property_setters()
 	create_supplier_contact_property_setters()
 	create_employee_full_name_property_setters()

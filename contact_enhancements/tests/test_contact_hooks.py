@@ -1208,3 +1208,43 @@ class TestPropagationRespectsPartyType(FrappeTestCase):
 		self.assertEqual(
 			frappe.db.get_value("Customer", customer.name, "mobile_no"), "+201099766050"
 		)
+
+
+class TestFullNameStaysInSyncWithFirstName(FrappeTestCase):
+	"""Frappe's own Contact.validate() computes full_name BEFORE this app's
+	normalization hook runs, so without an explicit recompute the two
+	fields disagreed permanently - and full_name is the one that travels:
+	it is what the app searches on, what it names a Customer/Supplier
+	from, and what the propagation hook pushes to every linked record."""
+
+	def test_full_name_reflects_the_normalized_first_name(self):
+		contact = frappe.new_doc("Contact")
+		contact.first_name = "أحمد محمد علي"
+		contact.insert(ignore_permissions=True)
+
+		self.assertEqual(contact.first_name, "احمد محمد على")
+		self.assertEqual(
+			frappe.db.get_value("Contact", contact.name, "full_name"), "احمد محمد على"
+		)
+
+	def test_the_two_fields_agree_after_a_digit_is_stripped(self):
+		contact = frappe.new_doc("Contact")
+		contact.first_name = "Omar1 Ahmed Sabry"
+		contact.insert(ignore_permissions=True)
+
+		stored_first = frappe.db.get_value("Contact", contact.name, "first_name")
+		stored_full = frappe.db.get_value("Contact", contact.name, "full_name")
+		self.assertEqual(stored_first, stored_full)
+		self.assertEqual(stored_full, "Omar Ahmed Sabry")
+
+	def test_they_still_agree_after_a_later_rename(self):
+		contact = frappe.new_doc("Contact")
+		contact.first_name = "Omar Ahmed Sabry"
+		contact.insert(ignore_permissions=True)
+
+		contact.first_name = "فاطمة محمد علي"
+		contact.save(ignore_permissions=True)
+
+		self.assertEqual(
+			frappe.db.get_value("Contact", contact.name, "full_name"), "فاطمه محمد على"
+		)

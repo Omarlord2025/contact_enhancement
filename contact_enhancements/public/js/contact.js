@@ -102,6 +102,8 @@ frappe.ui.form.on("Contact", {
 		frm.doc.first_name = normalize_arabic_first_name(frm.doc.first_name);
 	},
 	refresh(frm) {
+		stage_pending_phone(frm);
+
 		// Only makes sense once this Contact actually exists - a fresh,
 		// unsaved Contact can't be Dynamic-Linked to anything yet, so
 		// there's nothing for the live lookup to find regardless.
@@ -138,6 +140,55 @@ frappe.ui.form.on("Contact", {
 		frm.__ce_linked_addresses = { handle, wrapper: field.$wrapper[0] };
 	},
 });
+
+// Set by the contact-picker dialog just before it routes here, when
+// someone recognised an existing person in the duplicate-name list. The
+// number they had typed is staged onto that Contact as a new, UNSAVED row
+// so they can check it and save - which is the whole point of the feature:
+// the same person came back with a different number, so add the number to
+// the person that already exists instead of creating a second one.
+//
+// frappe.set_route is client-side navigation, so a plain module-scoped
+// value set before routing is still here when this form renders.
+function stage_pending_phone(frm) {
+	const pending = contact_enhancements.pending_contact_phone;
+	if (!pending || pending.contact !== frm.doc.name) return;
+
+	// One-shot: clear immediately so a later refresh (save, route back)
+	// can't stage the same number a second time.
+	contact_enhancements.pending_contact_phone = null;
+
+	const typed = (pending.phone || "").trim();
+	if (!typed) return;
+
+	// Don't add a number the Contact demonstrably already has. Compared on
+	// digits only, because what was typed is raw ("010 1234 5678") while
+	// what is stored is E.164 ("+201012345678") - contact_hooks normalizes
+	// on save, not before.
+	const digits = (v) => (v || "").replace(/\D/g, "");
+	const typed_digits = digits(typed);
+	const already = (frm.doc.phone_nos || []).some((row) => {
+		const stored = digits(row.phone);
+		return stored.endsWith(typed_digits) || typed_digits.endsWith(stored);
+	});
+	if (already) {
+		frappe.show_alert({
+			message: __("{0} already has that number.", [frm.doc.first_name || frm.doc.name]),
+			indicator: "blue",
+		});
+		return;
+	}
+
+	const row = frm.add_child("phone_nos", { phone: typed });
+	if (pending.country) row.country = pending.country;
+	frm.refresh_field("phone_nos");
+	frm.dirty();
+
+	frappe.show_alert({
+		message: __("Added {0} below - check it and save.", [frappe.utils.escape_html(typed)]),
+		indicator: "orange",
+	});
+}
 
 const LANDLINE_FLAG = "custom_landline";
 const MOBILE_ORIENTED_PHONE_FLAGS = ["is_primary_mobile_no", "custom_whatsapp", "custom_telegram"];
