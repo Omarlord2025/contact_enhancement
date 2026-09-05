@@ -352,9 +352,9 @@ def _apply_contact_identity(doc):
 	doc.customer_type = identity["party_type"]
 
 
-def enforce_primary_contact_and_address_on_new_customer(doc, method=None):
-	"""Customer validate hook - require a primary Contact and Address on a
-	Customer being created, and only then.
+def enforce_primary_contact_on_new_customer(doc, method=None):
+	"""Customer validate hook - require a primary Contact on a Customer
+	being created, and only then. The Address is NOT required.
 
 	This replaces the `reqd=1` Property Setters these two fields used to
 	carry. The requirement itself is unchanged for new records; what
@@ -378,12 +378,27 @@ def enforce_primary_contact_and_address_on_new_customer(doc, method=None):
 	frm.disable_save() until a Contact is chosen - so this throw is a
 	backstop for non-Desk paths, not the primary experience.
 
+	customer_primary_address is deliberately optional, matching Supplier
+	and Employee - all three now behave the same way. It was mandatory,
+	and that made the app's own primary creation flow a dead end: the
+	contact-picker dialog creates a brand-new Contact, a brand-new Contact
+	has no Address, and nothing could resolve one - so the save was hard
+	blocked on a field the dialog gave no way to fill. Requiring an address
+	up front also assumes every Customer has one at the moment they are
+	first entered, which is simply not how they arrive.
+
+	Nothing about address handling is lost by this. The address is still
+	resolved and filled in automatically wherever one can be found -
+	sync_customer_from_primary_contact's cross-doctype lookup, the Lead
+	snapshot, and the client-side prefill in public/js/customer.js all
+	still run. It is now a strong default rather than a gate.
+
 	Args:
 		doc: the Customer being validated.
 		method: unused, present for the doc_events hook signature.
 
 	Raises:
-		frappe.ValidationError: if a new Customer has neither field set.
+		frappe.ValidationError: if a new Customer has no primary Contact.
 	"""
 	# ignore_mandatory is Frappe's standard "skip required-field checks"
 	# escape hatch, and this IS a required-field check - honouring it keeps
@@ -393,9 +408,11 @@ def enforce_primary_contact_and_address_on_new_customer(doc, method=None):
 	if not doc.is_new() or doc.flags.ignore_mandatory:
 		return
 
+	# Contact only. customer_primary_address is deliberately NOT required -
+	# see this function's own docstring for why.
 	missing = [
 		doc.meta.get_label(fieldname)
-		for fieldname in ("customer_primary_contact", "customer_primary_address")
+		for fieldname in ("customer_primary_contact",)
 		if not doc.get(fieldname)
 	]
 	if missing:

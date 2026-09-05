@@ -153,15 +153,16 @@ def enforce_primary_contact_on_new_supplier(doc, method=None):
 
 	Replaces the `reqd=1` Property Setter supplier_primary_contact used to
 	carry, for the same reason as the Customer equivalent - see
-	customer_hooks.enforce_primary_contact_and_address_on_new_customer for
+	customer_hooks.enforce_primary_contact_on_new_customer for
 	the full reasoning. On the dataset this was measured against, Supplier
 	was the worse case: nearly half of existing Suppliers would have been
 	frozen, and not one of them had a Contact that could be backfilled.
 
 	supplier_primary_address is deliberately not required at all, new or
-	otherwise - unlike Customer, a Supplier has no conversion source to
-	inherit one from, and they are routinely onboarded with just a contact
-	person.
+	otherwise - suppliers are routinely onboarded with just a contact
+	person, the address following at the first purchase order. Customer
+	and Employee now behave the same way; no primary-address field in this
+	app is mandatory.
 
 	Runs last in Supplier's own validate list, after
 	backfill_supplier_primary_contact_from_dynamic_link has had its chance

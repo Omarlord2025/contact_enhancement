@@ -91,7 +91,12 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 		)
 		self.assertRaises(frappe.ValidationError, customer.insert)
 
-	def test_customer_cannot_be_saved_without_a_primary_address(self):
+	def test_customer_saves_without_a_primary_address(self):
+		# The address is deliberately NOT required - matching Supplier and
+		# Employee. Requiring it made this app's own creation flow a dead
+		# end: the contact-picker dialog creates a brand-new Contact, which
+		# by definition has no Address, so the save was blocked on a field
+		# the dialog offered no way to fill.
 		create_contact_enhancements_property_setters()
 		contact = make_contact()
 
@@ -103,7 +108,10 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 				"customer_primary_contact": contact.name,
 			}
 		)
-		self.assertRaises(frappe.ValidationError, customer.insert)
+		customer.insert()  # must not raise
+
+		self.assertTrue(customer.name)
+		self.assertFalse(customer.customer_primary_address)
 
 	def test_native_lead_conversion_still_works(self):
 		# erpnext's own native "Create > Customer" button on Lead
@@ -144,16 +152,13 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 		self.assertTrue(customer.customer_primary_contact)
 		self.assertEqual(customer.customer_primary_address, address.name)
 
-	def test_native_lead_conversion_requires_manual_address_when_lead_has_none(self):
-		# The documented boundary: unlike its auto-created Contact, a Lead
-		# has no Address at all unless a user manually adds one via the
-		# Lead's own Address & Contacts widget - the common case. Nothing
-		# in this app synthesizes a placeholder Address from the Lead's
-		# flat city/state/country fields (no clean mapping to Address's own
-		# mandatory address_line1), so native conversion still requires the
-		# user to supply one by hand, same as any other genuinely-missing
-		# mandatory field - it doesn't silently fail, and it doesn't
-		# silently fabricate data either.
+	def test_native_lead_conversion_works_when_the_lead_has_no_address(self):
+		# Unlike its auto-created Contact, a Lead has no Address at all
+		# unless someone manually added one - the common case. This used to
+		# block native conversion outright, because the address was
+		# mandatory and nothing in this app fabricates a placeholder from
+		# the Lead's flat city/state/country fields. Now that the address
+		# is optional, the conversion simply succeeds with it left blank.
 		from erpnext.crm.doctype.lead.lead import _make_customer
 
 		lead = frappe.get_doc(
@@ -172,7 +177,10 @@ class TestCreateContactEnhancementsPropertySetters(FrappeTestCase):
 		customer = _make_customer(lead.name, ignore_permissions=True)
 		customer.customer_group = "Individual"  # same unrelated site quirk as above
 
-		self.assertRaises(frappe.ValidationError, customer.insert, ignore_permissions=True)
+		customer.insert(ignore_permissions=True)  # must not raise
+
+		self.assertTrue(customer.name)
+		self.assertFalse(customer.customer_primary_address)
 
 
 class TestCreateContactEnhancementsIndexPropertySetters(FrappeTestCase):
@@ -339,3 +347,81 @@ class TestCreateSupplierContactPropertySetters(FrappeTestCase):
 			}
 		)
 		self.assertRaises(frappe.ValidationError, supplier.insert, ignore_permissions=True)
+
+
+class TestPrimaryAddressFieldsAreOptional(FrappeTestCase):
+	"""No primary-address field in this app is mandatory, on any doctype.
+
+	Customer's was, and it made the app's own creation flow a dead end -
+	the contact-picker dialog creates a brand-new Contact, a brand-new
+	Contact has no Address, so the save was blocked on a field the dialog
+	gave no way to fill. Supplier and Employee were already optional;
+	all three now behave the same.
+
+	The address is still resolved and filled in automatically wherever one
+	can be found (the cross-doctype lookup, the Lead snapshot, and the
+	client-side prefill all still run) - it is a strong default, not a gate.
+	"""
+
+	def test_no_address_field_is_mandatory_at_the_field_level(self):
+		for doctype, fieldname in (
+			("Customer", "customer_primary_address"),
+			("Supplier", "supplier_primary_address"),
+			("Employee", "employee_primary_address"),
+		):
+			with self.subTest(doctype=doctype):
+				self.assertFalse(frappe.get_meta(doctype).get_field(fieldname).reqd)
+
+	def test_no_reqd_property_setter_exists_for_any_address_field(self):
+		# Guards against one creeping back in via a setup function.
+		for doctype, fieldname in (
+			("Customer", "customer_primary_address"),
+			("Supplier", "supplier_primary_address"),
+			("Employee", "employee_primary_address"),
+		):
+			with self.subTest(doctype=doctype):
+				self.assertFalse(
+					frappe.db.exists("Property Setter", f"{doctype}-{fieldname}-reqd")
+				)
+
+	def test_a_customer_saves_with_a_contact_but_no_address(self):
+		from contact_enhancements.tests.test_customer_hooks import make_customer
+
+		contact = make_contact()
+		customer = make_customer(customer_primary_contact=contact.name)
+
+		self.assertTrue(customer.name)
+		self.assertFalse(customer.customer_primary_address)
+
+	def test_a_supplier_saves_with_a_contact_but_no_address(self):
+		from contact_enhancements.tests.test_supplier_hooks import make_supplier
+
+		contact = make_contact()
+		supplier = make_supplier(supplier_primary_contact=contact.name)
+
+		self.assertTrue(supplier.name)
+		self.assertFalse(supplier.supplier_primary_address)
+
+	def test_an_employee_saves_with_a_contact_but_no_address(self):
+		from contact_enhancements.tests.test_employee_hooks import make_employee
+
+		contact = make_contact()
+		employee = make_employee(employee_primary_contact=contact.name)
+
+		self.assertTrue(employee.name)
+		self.assertFalse(employee.employee_primary_address)
+
+	def test_the_contact_requirement_on_a_new_customer_still_holds(self):
+		# Only the ADDRESS became optional - the Contact requirement is
+		# unchanged, and that distinction is the whole point.
+		doc = frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": "No Contact " + frappe.generate_hash(length=6),
+				"customer_type": "Individual",
+				"customer_group": "Individual",
+				"territory": "All Territories",
+			}
+		)
+		with self.assertRaises(frappe.ValidationError):
+			doc.insert(ignore_permissions=True)

@@ -25,7 +25,7 @@ def execute():
 	MandatoryError, blocking ERPNext's own flows, Data Import and other
 	apps as well as the Desk form. The requirement is unchanged for new
 	records and now lives in
-	customer_hooks.enforce_primary_contact_and_address_on_new_customer and
+	customer_hooks.enforce_primary_contact_on_new_customer and
 	supplier_hooks.enforce_primary_contact_on_new_supplier, both gated on
 	doc.is_new().
 	"""

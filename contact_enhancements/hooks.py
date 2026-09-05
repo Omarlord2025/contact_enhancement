@@ -162,7 +162,7 @@ doc_events = {
 		# reports them missing.
 		"validate": [
 			"contact_enhancements.customer_hooks.sync_customer_from_primary_contact",
-			"contact_enhancements.customer_hooks.enforce_primary_contact_and_address_on_new_customer",
+			"contact_enhancements.customer_hooks.enforce_primary_contact_on_new_customer",
 		],
 		"on_update": "contact_enhancements.customer_hooks.link_primary_contact",
 	},

@@ -86,20 +86,23 @@ def _disable_quick_entry(doctype):
 
 
 def create_contact_enhancements_property_setters():
-	"""Make Customer Primary Contact and Customer Primary Address mandatory,
-	so every Customer is genuinely required to have a linked Contact and
-	Address - enforced everywhere (Desk UI, API, Data Import), not just
-	nudged. In the Desk UI this is satisfied through the mandatory
-	contact-picker dialog in contact_enhancements/public/js/customer.js,
-	which also live-prefills customer_primary_address from the picked
-	Contact's linked Lead when one is available (contact_enhancements/
-	api/lead_lookup.py's _get_lead_address) - if the Lead has no Address
-	linked to it yet, the user has to enter one manually before saving,
-	same as any other genuinely-missing mandatory field. Nothing here
-	synthesizes a placeholder Address from a Lead's flat city/state/country
-	fields - there's no clean mapping to Address's own mandatory
-	address_line1, and fabricating one would risk polluting real business
-	data.
+	"""Ensure neither Customer Primary Contact nor Customer Primary Address
+	carries a `reqd` Property Setter, and disable Customer's Quick Entry.
+
+	Both fields were once mandatory here. Neither is now:
+
+	- The CONTACT requirement still exists, but as a validate hook gated on
+	  doc.is_new() (customer_hooks.enforce_primary_contact_on_new_customer),
+	  so it applies to new records without retroactively freezing every
+	  Customer created before this app existed. See
+	  _clear_link_field_mandatory.
+	- The ADDRESS requirement is gone entirely, matching Supplier and
+	  Employee. Requiring it made this app's own creation flow a dead end:
+	  the contact-picker dialog creates a brand-new Contact, which by
+	  definition has no Address, so the save was blocked on a field the
+	  dialog offered no way to fill. The address is still resolved and
+	  filled automatically wherever one can be found - it is a strong
+	  default now, not a gate.
 
 	Also disables Customer's own Quick Entry (its field list has no
 	customer_primary_contact or customer_primary_address at all, confirmed
@@ -122,7 +125,7 @@ def create_contact_enhancements_property_setters():
 	"""
 	# Deliberately NOT _make_link_field_mandatory - see
 	# _clear_link_field_mandatory for why a static reqd had to go, and
-	# customer_hooks.enforce_primary_contact_and_address_on_new_customer
+	# customer_hooks.enforce_primary_contact_on_new_customer
 	# for where the requirement lives now.
 	_clear_link_field_mandatory("Customer", "customer_primary_contact")
 	_clear_link_field_mandatory("Customer", "customer_primary_address")

@@ -96,11 +96,12 @@ frappe.ui.form.on("Customer", {
 		// field with erpnext.buying...get_customer_primary(customer=doc.name),
 		// restricted to Addresses already Dynamic-Linked to THIS Customer -
 		// on a brand-new, unsaved Customer (doc.name doesn't exist yet)
-		// that always returns zero results. customer_primary_address is
-		// mandatory (setup/property_setters.py), so without this override a
-		// Customer with no Lead/Prospect/Opportunity source to auto-backfill
-		// it from (sync_customer_from_primary_contact) could never actually
-		// pick one - confirmed the hard way live in the browser. Clearing
+		// that always returns zero results. Without this override a Customer
+		// with no Lead/Prospect/Opportunity source to auto-backfill an
+		// address from (sync_customer_from_primary_contact) could never
+		// actually pick one - confirmed the hard way live in the browser.
+		// Still needed now that the field is optional: "optional" has to
+		// mean "you may set one", not "you cannot". Clearing
 		// the filter here (refresh always runs after that native setup()
 		// call) restores Frappe's own plain, unrestricted Address search.
 		frm.set_query("customer_primary_address", () => ({}));
@@ -255,19 +256,18 @@ async function apply_address_fallback(frm) {
 	// not it actually ran, or found an address of its own) - if this
 	// Contact is already linked to some other doctype this app tracks (a
 	// Supplier, a Lead with no Contact-level snapshot data, or a User)
-	// that already has an address, reuse it. Needed client-side, not
-	// just customer_hooks.sync_customer_from_primary_contact's own
-	// server-side version of this same fallback: customer_primary_address
-	// is mandatory, and Frappe's own native client-side check blocks the
-	// save before that server-side hook ever gets a chance to run if the
-	// field is still blank at that moment (contact_enhancements/CLAUDE.md).
+	// that already has an address, reuse it. Still done client-side even
+	// though customer_primary_address is no longer mandatory: showing the
+	// resolved address before Save is the point ("sync before save"), and
+	// it keeps Customer consistent with Supplier and Employee, which do
+	// the same for their own optional address fields.
 	if (frm.doc.customer_primary_address) return;
 
-	// This runs on the non-cancelable mandatory-contact dialog's own flow,
-	// and customer_primary_address is reqd - so a silent failure here
-	// leaves the user stuck at Save with a blank mandatory field, no
-	// message, and (the dialog being no_cancel) no way out. Tell them
-	// instead, so they know to pick an address themselves.
+	// This runs on the non-cancelable contact dialog's own flow. The
+	// address is no longer mandatory, so a failure here can't strand
+	// anyone at Save any more - but it still silently skips a prefill the
+	// user expected, so say so rather than leaving them wondering why the
+	// address stayed blank.
 	// Note frappe.call resolves with exc set rather than rejecting, so
 	// both that and a genuine transport rejection have to be handled.
 	let r;

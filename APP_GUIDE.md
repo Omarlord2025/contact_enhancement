@@ -34,9 +34,9 @@ It does this in three layers:
 |---|---|
 | **Contact** | Name/phone rules, duplicate detection, "Linked Addresses" panel |
 | **Contact Phone** | Country, channel flags (WhatsApp/Telegram/Landline), E.164 storage, uniqueness |
-| **Customer** | Mandatory primary contact + address (new records), contact picker dialog |
-| **Supplier** | Mandatory primary contact (new records), contact picker dialog |
-| **Employee** | Optional primary contact + address, on-demand picker |
+| **Customer** | Required primary contact on new records (address optional), contact picker dialog |
+| **Supplier** | Required primary contact on new records (address optional), contact picker dialog |
+| **Employee** | Optional primary contact and address, on-demand picker |
 | **User** | Optional primary contact, "Linked Addresses" panel |
 | **Lead** | Address inherited from the Contact's other links |
 | **Address** | Reused via its native Dynamic Link table — no new fields |
@@ -159,8 +159,15 @@ sets a single first name, and a blanket rule would break it. It applies to:
 
 ## 6. The contact requirement
 
-New **Customers** need a primary Contact *and* a primary Address.
-New **Suppliers** need a primary Contact.
+New **Customers** and new **Suppliers** need a primary **Contact**.
+
+**No primary Address is ever required** — not on Customer, Supplier or
+Employee. The address is still resolved and filled in automatically wherever
+one can be found (the cross-doctype lookup, the Lead snapshot, and the
+client-side prefill all still run); it is a strong default, not a gate.
+Requiring it used to make the app's own creation flow a dead end — the
+contact-picker dialog creates a brand-new Contact, which by definition has no
+Address, so the save was blocked on a field the dialog gave no way to fill.
 
 This is enforced by validate hooks gated on `doc.is_new()` — **not** by a mandatory field.
 That is deliberate and important:
@@ -387,7 +394,6 @@ notes in `CLAUDE.md`.
 | Limitation | Detail |
 |---|---|
 | **Two-character CJK names** | `李伟` is refused by the three-part name rule. A complete and correct name that this system cannot store |
-| **Customer creation is two steps** | The dialog creates a Contact with no address, but a new Customer needs one — so you pick an address before saving |
 | **Customer group default** | The dialog's `customer_group` can default to a group node, which ERPNext rejects. Pick a leaf group |
 | **Duplicate warning visibility** | `warn_if_duplicate_contact` uses `msgprint`, which can surface on customer-facing pages if a Contact is created there |
 | **JS rule mirror** | The name rules exist in both Python and JavaScript. There is no JS test infrastructure, so keeping them in sync is a review discipline — they have drifted before |
