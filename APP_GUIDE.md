@@ -123,21 +123,19 @@ Rules are applied **in order**, and **correct the value in place — they never 
 Hebrew, Devanagari, Tamil, Bengali and Thai all store correctly, including accented Latin
 (`José Müller`) and names with punctuation (`O'Brien`, `Anne-Marie`, `Al-Sayed`).
 
-### 5.2 The three-part name rule
+### 5.2 No minimum on name length
 
-A name must contain **at least three components** — first, father's, and family name.
+This app used to require a name to have at least three components (first, father's,
+family) on every custom data-entry window it built — the shared contact-picker dialog's
+"create a new Contact" path (Customer/Supplier/Employee/User all funnel through it) and
+`Employee.first_name` directly. **That requirement has been removed.** A name of any
+length — one word, two words, or a two-character CJK name like `李伟` — is now accepted
+everywhere in this app.
 
-```
-Ahmed Sabry Amin      → accepted
-Ahmed Sabry           → refused
-Anne-Marie Dupont     → refused (the hyphen does not create a third part)
-李伟                   → refused (see Known Limitations)
-```
-
-Deliberately **not** a blanket Contact rule — ERPNext's own Lead-to-Contact auto-creation
-sets a single first name, and a blanket rule would break it. It applies to:
-- `api.contact_lookup.create_minimal_contact` (every "create new Contact" dialog)
-- `Employee.first_name` on save
+The live "someone with this name is already on file" lookup in the contact-picker dialog
+(`api.contact_lookup.search_contacts_by_name_prefix`) still matches on up to three leading
+name components, but that is a search heuristic for "is this the same person," independent
+of whether any particular length is required of the name itself.
 
 ### 5.3 Phone rules
 
@@ -339,7 +337,6 @@ which to keep. Merging is one click.
 | **Employee** | validate | `sync_employee_contact_from_user` |
 | | validate | `backfill_employee_name_from_primary_contact` |
 | | validate | `sync_employee_address_from_contact_links` |
-| | validate | `enforce_full_name_has_at_least_three_words` |
 | | on_update | `link_employee_contact` |
 | **User** | validate | `validate_user_phone_before_contact_sync` |
 | | validate | `backfill_user_name_from_primary_contact` |
@@ -393,7 +390,6 @@ notes in `CLAUDE.md`.
 
 | Limitation | Detail |
 |---|---|
-| **Two-character CJK names** | `李伟` is refused by the three-part name rule. A complete and correct name that this system cannot store |
 | **Customer group default** | The dialog's `customer_group` can default to a group node, which ERPNext rejects. Pick a leaf group |
 | **Duplicate warning visibility** | `warn_if_duplicate_contact` uses `msgprint`, which can surface on customer-facing pages if a Contact is created there |
 | **JS rule mirror** | The name rules exist in both Python and JavaScript. There is no JS test infrastructure, so keeping them in sync is a review discipline — they have drifted before |

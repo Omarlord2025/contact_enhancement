@@ -184,7 +184,6 @@ doc_events = {
 			"contact_enhancements.employee_hooks.sync_employee_contact_from_user",
 			"contact_enhancements.employee_hooks.backfill_employee_name_from_primary_contact",
 			"contact_enhancements.employee_hooks.sync_employee_address_from_contact_links",
-			"contact_enhancements.employee_hooks.enforce_full_name_has_at_least_three_words",
 		],
 		"on_update": "contact_enhancements.employee_hooks.link_employee_contact",
 	},

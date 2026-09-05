@@ -17,7 +17,6 @@ Customer/Supplier.
 
 from frappe.contacts.doctype.contact.contact import get_contact_name
 
-from contact_enhancements.contact_hooks import validate_full_name_has_at_least_three_words
 from contact_enhancements.utils import (
 	backfill_name_from_primary_contact,
 	ensure_contact_linked_to_parent,
@@ -31,33 +30,11 @@ def backfill_employee_name_from_primary_contact(doc, method=None):
 	from the primary Contact's full_name when it's still blank. See
 	utils.backfill_name_from_primary_contact.
 
-	Runs before enforce_full_name_has_at_least_three_words in the same
-	validate list, so a name filled in from the Contact is then held to
-	the same three-word rule as one typed by hand.
-
 	Args:
 		doc: the Employee being validated.
 		method: unused, present for the doc_events hook signature.
 	"""
 	backfill_name_from_primary_contact(doc, "employee_primary_contact", "first_name")
-
-
-def enforce_full_name_has_at_least_three_words(doc, method=None):
-	"""Employee validate hook: first_name (relabeled "Full Name" -
-	setup/property_setters.py's create_employee_full_name_property_setters)
-	must have at least three words once it's actually set - see contact_
-	hooks.validate_full_name_has_at_least_three_words's own docstring for
-	the full reasoning, including why this is safe to enforce
-	unconditionally here (unlike a blanket Contact-level rule): the one
-	native programmatic Employee-creation flow in this bench (erpnext's
-	own setup wizard "create employee for self") leaves first_name blank
-	entirely, which this passes through untouched.
-
-	Args:
-		doc: the Employee document being validated.
-		method: unused, present for the doc_events hook signature.
-	"""
-	validate_full_name_has_at_least_three_words(doc.first_name)
 
 
 def sync_employee_contact_from_user(doc, method=None):

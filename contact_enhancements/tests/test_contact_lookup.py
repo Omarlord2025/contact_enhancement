@@ -193,23 +193,18 @@ class TestCreateMinimalContact(FrappeTestCase):
 		contact = frappe.get_doc("Contact", name)
 		self.assertEqual(contact.phone_nos[0].country, "Egypt")
 
-	def test_rejects_a_single_word_name(self):
-		self.assertRaises(
-			frappe.ValidationError,
-			create_minimal_contact,
-			first_name="Nadia",
-			phone="01033344455",
-			country="Egypt",
-		)
+	def test_accepts_a_single_word_name(self):
+		# The three-word requirement this app used to enforce here has been
+		# removed - a name is no longer required to have any particular
+		# number of components.
+		name = create_minimal_contact(first_name="Nadia", phone="01033344455", country="Egypt")
+		contact = frappe.get_doc("Contact", name)
+		self.assertEqual(contact.first_name, "Nadia")
 
-	def test_rejects_a_two_word_name(self):
-		self.assertRaises(
-			frappe.ValidationError,
-			create_minimal_contact,
-			first_name="Nadia Ahmed",
-			phone="01033344466",
-			country="Egypt",
-		)
+	def test_accepts_a_two_word_name(self):
+		name = create_minimal_contact(first_name="Nadia Ahmed", phone="01033344466", country="Egypt")
+		contact = frappe.get_doc("Contact", name)
+		self.assertEqual(contact.first_name, "Nadia Ahmed")
 
 	def test_accepts_a_three_word_name(self):
 		name = create_minimal_contact(first_name="Nadia Ahmed Sabry", phone="01033344477", country="Egypt")

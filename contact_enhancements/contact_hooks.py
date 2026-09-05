@@ -270,53 +270,6 @@ def normalize_contact_first_name(doc, method=None):
 	doc.full_name = doc._get_full_name()
 
 
-def validate_full_name_has_at_least_three_words(full_name):
-	"""Raise unless full_name is blank, or has at least three space-
-	separated words - e.g. "Ahmed Mohamed Sabry" (first, father's, and
-	family name, the common convention this app's own dialogs assume by
-	asking for one combined "Full Name" field instead of separate first/
-	last inputs), not "Ahmed" or "Ahmed Mohamed" alone.
-
-	Blank is deliberately allowed through here untouched - this only ever
-	enforces *shape* once a name is actually present; whether one is
-	required at all is a separate, doctype-specific concern (a native
-	reqd=1 Property Setter, or the calling dialog's own "enter a name"
-	check).
-
-	Deliberately NOT wired as a blanket Contact validate() doc_event, the
-	way normalize_contact_first_name above is - confirmed the risk before
-	adding this: ERPNext's own native Lead.create_contact() (erpnext/crm/
-	doctype/lead/lead.py) sets a brand-new Contact's first_name to just
-	the Lead's own single first_name field, with last_name held
-	separately - a blanket Contact-level hook here would reject that
-	native flow's own Contact the same way Contact.country's own reqd=1
-	once broke it (contact_enhancements/CLAUDE.md). Scoped instead to
-	exactly the paths this app itself owns and controls: api.contact_
-	lookup.create_minimal_contact (every "create a new Contact" dialog
-	this app has - Customer/Supplier/Employee/User all funnel through it,
-	never called by any native ERPNext flow) and Employee.
-	first_name directly (employee_hooks.enforce_full_name_has_at_least_
-	three_words) - Employee has no equivalent native single-word-name
-	creation flow (confirmed: the one native programmatic Employee
-	creation site, erpnext's own setup wizard "create employee for self",
-	leaves first_name blank entirely and relies on ignore_mandatory to
-	bypass the separate reqd check - unaffected by this function's own
-	blank-is-a-noop behavior).
-
-	Args:
-		full_name: the value about to become a "Full Name" field.
-
-	Raises:
-		frappe.ValidationError if non-blank with fewer than three words.
-	"""
-	if not full_name:
-		return
-	if len(full_name.split()) < 3:
-		frappe.throw(
-			_("Enter a full name with at least three words (e.g. first, father's, and family name).")
-		)
-
-
 """Per-country phone validation (normalize_and_validate_contact_phone /
 _detect_phone_country / normalize_and_validate_contact_phones)
 ------------------------------------------------------------------------------

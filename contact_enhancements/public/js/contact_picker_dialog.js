@@ -171,18 +171,6 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 				frappe.msgprint(__("Enter a first name for the new Contact."));
 				return;
 			}
-			// Mirrors contact_enhancements.contact_hooks.
-			// validate_full_name_has_at_least_three_words - the single
-			// source of truth (that function's own docstring has the full
-			// reasoning, including why it's scoped to this create-new path
-			// and Employee.first_name specifically, not a blanket Contact
-			// rule). This client-side check is instant feedback only,
-			// not enforcement - create_minimal_contact's own server-side
-			// call is what actually guarantees it.
-			if (values.new_first_name.trim().split(/\s+/).filter(Boolean).length < 3) {
-				frappe.msgprint(__("Enter a full name with at least three words (e.g. first, father's, and family name)."));
-				return;
-			}
 			if (!extra_fields_are_valid(values)) return;
 			// Per-country phone format validation happens server-side now -
 			// a bad number surfaces via this call's own error() callback

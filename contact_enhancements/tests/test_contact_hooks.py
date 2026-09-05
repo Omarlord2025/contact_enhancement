@@ -26,7 +26,6 @@ from contact_enhancements.contact_hooks import (
 	propagate_contact_changes_to_linked_doctypes,
 	strip_phone_formatting_noise,
 	try_to_e164,
-	validate_full_name_has_at_least_three_words,
 )
 from contact_enhancements.tests.test_lead_lookup import make_contact
 
@@ -111,27 +110,6 @@ class TestNormalizeContactFirstName(FrappeTestCase):
 		doc.first_name = "فاطمة"
 		normalize_contact_first_name(doc)
 		self.assertEqual(doc.first_name, "فاطمه")
-
-
-class TestValidateFullNameHasAtLeastThreeWords(FrappeTestCase):
-	def test_raises_on_a_single_word(self):
-		self.assertRaises(frappe.ValidationError, validate_full_name_has_at_least_three_words, "Ahmed")
-
-	def test_raises_on_two_words(self):
-		self.assertRaises(frappe.ValidationError, validate_full_name_has_at_least_three_words, "Ahmed Mohamed")
-
-	def test_passes_on_three_words(self):
-		validate_full_name_has_at_least_three_words("Ahmed Mohamed Sabry")  # must not raise
-
-	def test_passes_on_more_than_three_words(self):
-		validate_full_name_has_at_least_three_words("Ahmed Mohamed Sabry El Din")  # must not raise
-
-	def test_blank_is_a_noop(self):
-		validate_full_name_has_at_least_three_words(None)  # must not raise
-		validate_full_name_has_at_least_three_words("")  # must not raise
-
-	def test_collapses_repeated_whitespace_before_counting(self):
-		validate_full_name_has_at_least_three_words("Ahmed   Mohamed  Sabry")  # must not raise
 
 
 class TestNormalizeAndValidateContactPhone(FrappeTestCase):
@@ -316,15 +294,6 @@ class TestNameNormalizerAcceptsEveryScript(FrappeTestCase):
 
 	def test_keeps_a_hyphen_inside_a_name(self):
 		self.assertEqual(normalize_arabic_first_name("Ahmed Al-Sayed Hassan"), "Ahmed Al-Sayed Hassan")
-
-	def test_a_hyphenated_given_name_stays_one_component(self):
-		# The three-word rule counts the name as typed, so this stays two
-		# components and is refused - the normalizer must not silently
-		# split it into three by turning the hyphen into a space.
-		self.assertEqual(normalize_arabic_first_name("Anne-Marie Dupont"), "Anne-Marie Dupont")
-		self.assertRaises(
-			frappe.ValidationError, validate_full_name_has_at_least_three_words, "Anne-Marie Dupont"
-		)
 
 	def test_a_stray_hyphen_between_words_is_not_kept_as_a_word(self):
 		self.assertEqual(normalize_arabic_first_name("Ahmed - Ali Hassan"), "Ahmed Ali Hassan")

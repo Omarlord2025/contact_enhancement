@@ -7,7 +7,6 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.employee_hooks import (
-	enforce_full_name_has_at_least_three_words,
 	link_employee_contact,
 	sync_employee_address_from_contact_links,
 	sync_employee_contact_from_user,
@@ -18,15 +17,10 @@ from contact_enhancements.tests.test_supplier_hooks import make_address
 
 
 def make_employee(**kwargs):
-	# Three hash segments, not one - enforce_full_name_has_at_least_three_
-	# words is a real, unbypassable validate() hook now (registered in
-	# hooks.py), so every factory-built Employee needs a name shaped like
-	# a real one by default, not just a single random token.
-	default_first_name = " ".join(frappe.generate_hash(length=6) for _ in range(3))
 	employee = frappe.get_doc(
 		{
 			"doctype": "Employee",
-			"first_name": default_first_name,
+			"first_name": frappe.generate_hash(length=10),
 			"gender": "Prefer not to say",
 			"date_of_birth": "1990-01-01",
 			"date_of_joining": "2020-01-01",
@@ -155,27 +149,3 @@ class TestLinkEmployeeContact(FrappeTestCase):
 	def test_noop_without_a_primary_contact(self):
 		employee = make_employee()
 		link_employee_contact(employee)  # must not raise
-
-
-class TestEnforceFullNameHasAtLeastThreeWords(FrappeTestCase):
-	def test_rejects_a_single_word_first_name(self):
-		with self.assertRaises(frappe.ValidationError):
-			make_employee(first_name="Ahmed")
-
-	def test_rejects_two_words(self):
-		with self.assertRaises(frappe.ValidationError):
-			make_employee(first_name="Ahmed Mohamed")
-
-	def test_accepts_three_words(self):
-		employee = make_employee(first_name="Ahmed Mohamed Sabry")
-		self.assertEqual(employee.first_name, "Ahmed Mohamed Sabry")
-
-	def test_native_setup_wizard_flow_is_unaffected_by_a_blank_name(self):
-		# erpnext's own "create employee for self" (setup wizard) leaves
-		# first_name blank entirely and relies on ignore_mandatory to
-		# bypass the separate native reqd check - confirmed this hook
-		# never fires a spurious error for that flow, since it's a no-op
-		# on blank.
-		doc = frappe.new_doc("Employee")
-		doc.flags.ignore_mandatory = True
-		enforce_full_name_has_at_least_three_words(doc)  # must not raise

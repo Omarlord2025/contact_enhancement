@@ -20,7 +20,6 @@ from frappe import _
 # endpoints - see search_contacts_with_details.
 MAX_SEARCH_PAGE_LEN = 100
 
-from contact_enhancements.contact_hooks import validate_full_name_has_at_least_three_words
 from contact_enhancements.utils import (
 	address_display_fields,
 	address_source_label,
@@ -73,8 +72,6 @@ def create_minimal_contact(first_name, phone, country=None):
 	Returns:
 		The new Contact's name.
 	"""
-	validate_full_name_has_at_least_three_words(first_name)
-
 	contact = frappe.new_doc("Contact")
 	contact.first_name = first_name
 	row = {"phone": phone, "is_primary_mobile_no": 1}
@@ -359,9 +356,11 @@ def _attach_phones(matches):
 
 
 # How many leading name components identify "the same person" for the
-# duplicate-name lookup. Three, because this app already requires a name to
-# have at least three parts (first, father's, family) - see
-# contact_hooks.validate_full_name_has_at_least_three_words.
+# duplicate-name lookup. Three (first, father's, family) is a heuristic
+# choice for this search only - the app no longer requires a name to have
+# any particular number of parts, but three is still a reasonable amount
+# of a name to key a "is this the same person" match on regardless of
+# whether it's enforced anywhere.
 NAME_PREFIX_COMPONENTS = 3
 
 # Below this many characters a prefix matches too much of the table to be
