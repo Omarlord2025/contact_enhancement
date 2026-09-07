@@ -91,6 +91,29 @@ CONTACT_ENHANCEMENTS_CUSTOM_FIELDS = {
 			"in_list_view": 1,
 			"columns": 1,
 		},
+		{
+			"fieldname": "custom_country_resolution",
+			"fieldtype": "Select",
+			"label": "Country Resolution",
+			"insert_after": "custom_landline",
+			"options": "\nUnresolved\nDetected\nPattern\nManual",
+			"hidden": 1,
+			"read_only": 1,
+			"in_list_view": 0,
+			"in_standard_filter": 0,
+			"search_index": 1,
+			"description": (
+				"How this row's own country was decided by patches.backfill_contact_"
+				"phone_country_resolution / api.phone_country_resolution - "
+				"'Detected' (the number's own international prefix), 'Pattern' "
+				"(the Egyptian-mobile heuristic), 'Manual' (an administrator "
+				"resolved it via the Phone Country Resolution page), or "
+				"'Unresolved' (neither automatic rule matched - still listed on "
+				"that page). Blank for any row this one-time historical backfill "
+				"never touched - a brand-new row created after this shipped never "
+				"sets it and never appears on that page."
+			),
+		},
 	],
 	"Employee": [
 		{

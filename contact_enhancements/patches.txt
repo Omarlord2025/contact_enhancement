@@ -26,6 +26,15 @@ contact_enhancements.patches.renormalize_contact_phones_to_e164
 # already-E.164 phone value. Also has no dependency on (and isn't blocked
 # by) the phone-uniqueness chain below.
 contact_enhancements.patches.backfill_contact_phone_national
+# backfill_contact_phone_country_resolution is the same historical-phone-
+# migration family as the two patches above - it depends on
+# create_contact_enhancements_custom_fields (calls it itself) for the new
+# custom_country_resolution field, and re-normalizes to E.164 itself for any
+# row whose country it corrects, so it has no hard ordering dependency on
+# renormalize_contact_phones_to_e164 beyond running after move_country_to_
+# contact_phone (which is what actually gave every row its current,
+# possibly-wrong "Egypt" default).
+contact_enhancements.patches.backfill_contact_phone_country_resolution
 contact_enhancements.patches.report_duplicate_mobile_contacts
 # relabel_contact_first_name and hide_contact_phone_is_primary_phone have
 # no dependency on the phone-uniqueness chain - deliberately placed before

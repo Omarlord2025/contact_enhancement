@@ -519,6 +519,67 @@ def _country_for_region_code(region):
 	return cache[code]
 
 
+"""Historical Contact Phone country backfill (resolve_phone_country)
+------------------------------------------------------------------------------
+patches.move_country_to_contact_phone blanket-set every pre-existing row's
+country to "Egypt" (this app's own default) the day the field was
+introduced - a placeholder, not an answer. resolve_phone_country is the
+narrow, two-rule-only resolver patches.backfill_contact_phone_country_
+resolution runs against every historical row's own phone number to replace
+that guess with real evidence, or flag it for a human instead of leaving it
+silently mislabeled. Deliberately consults nothing else - no other DocType,
+no linked record - both rules look at the phone string alone.
+"""
+
+EGYPT_MOBILE_BACKFILL_PATTERN = re.compile(r"^(010|011|012|015)\d{8}$")
+# Exactly 11 digits, one of Egypt's four mobile operator prefixes - a
+# narrow backfill heuristic only, not general validation (that's
+# normalize_and_validate_contact_phone/phonenumbers below, which this
+# pattern's own match is still run through before anything is trusted).
+# Deliberately a new, differently-named constant rather than reviving the
+# old, removed api/lead_lookup.EGYPT_MOBILE_PATTERN - that one used to gate
+# live validation outright (rejecting every landline-shaped number); this
+# one only ever feeds a one-time historical backfill's own confidence
+# label, never live save behavior.
+
+
+def resolve_phone_country(phone):
+	"""Resolve a historical Contact Phone row's country from its own number
+	alone, for patches.backfill_contact_phone_country_resolution - see this
+	section's own module docstring for why this exists and what it
+	deliberately does not do.
+
+	Applies exactly two rules, in order:
+
+	1. An explicit international prefix ("+"/"00") that phonenumbers can
+	   parse and validate - reuses _detect_phone_country, the same "does
+	   this number's own country code say something" check the live
+	   Contact validate hook already performs for self-correction.
+	2. An Egyptian mobile pattern: exactly 11 digits, starting with 010,
+	   011, 012, or 015, once formatting noise (spaces/dashes/dots/parens)
+	   is stripped.
+
+	Neither rule succeeding means unresolved - the caller reports that row
+	for manual resolution rather than guessing further.
+
+	Args:
+		phone: the raw phone number as stored/typed.
+
+	Returns:
+		{"country": name of a Country record, "confidence": "detected" or
+		"pattern"}, or None if neither rule matches.
+	"""
+	detected_country = _detect_phone_country(phone)
+	if detected_country:
+		return {"country": detected_country, "confidence": "detected"}
+
+	stripped = strip_phone_formatting_noise(phone) or ""
+	if EGYPT_MOBILE_BACKFILL_PATTERN.match(stripped):
+		return {"country": "Egypt", "confidence": "pattern"}
+
+	return None
+
+
 def normalize_and_validate_contact_phone(phone, country, is_landline=False):
 	"""Validate one phone number against a specific country's own
 	numbering plan, and return it in international E.164 form (e.g.

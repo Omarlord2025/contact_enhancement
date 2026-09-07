@@ -1,0 +1,44 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"cewCH01hdr\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Contact Enhancements</b></span>\",\"col\":12}},{\"id\":\"cewCH02sc1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Duplicate Mobile Contacts\",\"col\":4}},{\"id\":\"cewCH03sc2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Phone Country Resolution\",\"col\":4}}]",
+ "creation": "2026-09-07 00:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "contact",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "Contact Enhancements",
+ "links": [],
+ "modified": "2026-09-07 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Contact Enhancements",
+ "name": "Contact Enhancements",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "label": "Duplicate Mobile Contacts",
+   "link_to": "duplicate-mobile-contacts",
+   "type": "Page"
+  },
+  {
+   "label": "Phone Country Resolution",
+   "link_to": "phone-country-resolution",
+   "type": "Page"
+  }
+ ],
+ "title": "Contact Enhancements"
+}
