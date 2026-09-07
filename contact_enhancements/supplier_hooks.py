@@ -117,13 +117,13 @@ def backfill_supplier_primary_contact_from_dynamic_link(doc, method=None):
 def sync_supplier_address_from_contact_links(doc, method=None):
 	"""Supplier validate hook: if this Supplier's own primary contact is
 	already linked to another doctype this app tracks (a Customer,
-	another Supplier, a Lead, or a User) - the same real person/entity
-	trades as more than one party of this business, a genuinely common
-	case - backfill this Supplier's own address from whichever of those
-	already has one, in order of superiority (Customer first, then
-	Supplier, then Lead, then User - see utils.resolve_address_from_
-	contact_links's own docstring for why), only if this Supplier doesn't
-	already have one of its own.
+	another Supplier, an Employee, a Lead, or a User) - the same real
+	person/entity trades as more than one party of this business, a
+	genuinely common case - backfill this Supplier's own address from
+	whichever of those already has one, in order of superiority (Customer
+	first, then Supplier, then Employee, then Lead, then User - see
+	utils.resolve_address_from_contact_links's own docstring for why),
+	only if this Supplier doesn't already have one of its own.
 
 	Only-if-blank, same as every other cross-doctype backfill in this app -
 	never overwrites an address someone deliberately picked or entered

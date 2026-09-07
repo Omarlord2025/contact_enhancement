@@ -99,21 +99,34 @@ function show_user_onboarding_dialog(frm) {
 				frm.set_value("role_profile_name", values.role_profile);
 			}
 
-			// Only the dialog's OWN values are applied here - they're the
-			// more specific answer, and this runs before finish() sets
-			// user_primary_contact. Falling back to the Contact's own
-			// full_name/email_id used to be a second, separate fetch right
-			// here; it now happens in the user_primary_contact field
-			// handler via the shared prefill_from_contact, which fires
-			// moments later when finish() sets that field. That covers
-			// this path and the native Link dropdown with one
-			// implementation and one round-trip instead of two.
-			if (values.new_first_name && !frm.doc.first_name) {
-				frm.set_value("first_name", values.new_first_name);
-			}
+			// email is filled from the dialog's own raw value on purpose -
+			// per this field's own description and the explicit product
+			// direction it documents, a login email the admin actually
+			// typed here must win over the picked/created Contact's own
+			// email_id, which is only ever a fallback for a blank field.
+			// Setting it here, before finish() below sets
+			// user_primary_contact, is what makes the field handler's own
+			// prefill_from_contact see it as already-filled and skip
+			// overwriting it - see that function's own blank-check.
 			if (values.email && !frm.doc.email) {
 				frm.set_value("email", values.email);
 			}
+
+			// first_name is deliberately NOT filled from values.new_first_name
+			// here, unlike email above - there is no equivalent "the dialog's
+			// own value must win" product decision for a person's own name,
+			// and doing so used to actively cause a bug: that value is the
+			// create-new-Contact text exactly as typed, before contact_hooks.
+			// normalize_contact_first_name has run on it server-side inside
+			// create_minimal_contact's own Contact.insert(). Setting
+			// User.first_name from it directly saved the unnormalized text
+			// onto the User while the Contact itself ended up correctly
+			// normalized - the two silently disagreeing. Leaving first_name
+			// blank here lets the user_primary_contact field handler's
+			// shared prefill_from_contact (fired moments later, when finish()
+			// sets that field) fetch the Contact's own already-normalized
+			// full_name instead - the same mechanism the "pick an existing
+			// Contact" path already relies on, now covering create-new too.
 		},
 	});
 }

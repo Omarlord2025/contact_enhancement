@@ -221,8 +221,13 @@ Permission is checked explicitly before the insert, exactly as the old save did.
 If a Contact is already linked to a Customer with an address, and the same person is added
 as a Supplier, the Supplier's address is filled in automatically.
 
-Resolution order: **Customer → Supplier → Lead → User**. Only ever fills a blank field —
-it never overwrites an address someone chose.
+Resolution order: **Customer → Supplier → Employee → Lead → User**. Only ever fills a blank
+field — it never overwrites an address someone chose. Employee ranks just below Customer/
+Supplier, not alongside them: `employee_primary_address` is a real, per-record field kept
+current the same way theirs is (a genuine source, not a guess), but unlike Customer/Supplier
+it's never enforced-mandatory — which is what keeps it behind those two rather than tied with
+them. Lead and User rank lowest of all (see `utils.resolve_address_from_contact_links`'s own
+docstring for the full reasoning).
 
 ### 7.3 Continuous propagation
 
@@ -285,6 +290,19 @@ Picking a Contact fills the parent's name field — `customer_name`, `supplier_n
 `first_name` — from the Contact's full name, if it's still blank. This works through **every**
 path: the dialog's search, the dialog's create-new, and the native Link dropdown. A
 server-side backstop covers API and Data Import, where no browser runs.
+
+> **Always the Contact's own already-normalized name, never the dialog's raw typed text.**
+> Customer/User's own dialogs used to fill `customer_name`/`first_name` on the create-new path
+> directly from the "Full Name" field as typed, before `contact_hooks.
+> normalize_contact_first_name` had run on it server-side (inside the new Contact's own
+> `insert()`) - so a name needing correction (stray whitespace, an Arabic word-ending fix, etc.)
+> saved correctly onto the Contact but with the raw, uncorrected text onto the Customer/User.
+> Fixed by leaving that field blank on the create-new path too and letting the same
+> field-change handler that already re-fetches it for the "pick an existing Contact" path
+> (`frappe.db.get_value`-ing the Contact's own `full_name` once it's actually been saved and
+> normalized) supply it there as well - one mechanism for both paths instead of two, only one
+> of which was ever correct. Supplier/Employee never had this bug - both already relied
+> exclusively on that same fetch-based mechanism.
 
 ### 8.3 Linked Addresses panel
 

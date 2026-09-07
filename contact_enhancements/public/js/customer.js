@@ -218,11 +218,15 @@ async function apply_contact_identity(frm) {
 	// when the Contact clearly named an employer.
 	//
 	// Guarded on customer_name still being blank, which is what stops it
-	// fighting deliberate input: on the dialog's "create a new Contact"
-	// path the user has already stated Individual/Company and typed the
-	// matching name, so customer_name is set by the time this runs and
-	// nothing here fires. customer_type is only ever set alongside a name
-	// this function is itself supplying.
+	// fighting deliberate input - not "never fires on create-new", which it
+	// now deliberately does: the dialog's own on_before_finish only ever
+	// pre-fills customer_name for the Company branch (new_company_name,
+	// data create_minimal_contact never writes onto the Contact, so nothing
+	// else could supply it); the Individual branch leaves customer_name
+	// blank on purpose so THIS fetch is what names it, from the Contact's
+	// own already-normalized full_name rather than the dialog's raw,
+	// pre-normalization text. customer_type is only ever set alongside a
+	// name this function is itself supplying.
 	if (!frm.doc.customer_primary_contact || frm.doc.customer_name) return;
 
 	let r;
@@ -369,15 +373,29 @@ function show_mandatory_contact_dialog(frm) {
 			frm.set_value("customer_type", values.new_is_company ? "Company" : "Individual");
 			apply_environment_default_field(frm, "customer_group", values.customer_group);
 
-			// A brand-new Contact has no Lead to prefill customer_name
-			// from (unlike picking an existing one), so it would
-			// otherwise stay blank - also separately mandatory on
-			// Customer, so leaving it unset here would just trade one
-			// required-field block for another right after closing this
-			// dialog.
-			const customer_name_hint = values.new_is_company ? values.new_company_name : values.new_first_name;
-			if (customer_name_hint && !frm.doc.customer_name) {
-				frm.set_value("customer_name", customer_name_hint);
+			// Company name only. new_company_name is dialog-only data -
+			// create_minimal_contact never writes it onto the new Contact
+			// (see that function's own docstring), so nothing else can ever
+			// supply it; it also isn't run through any normalization rule,
+			// so using it verbatim is correct, not a shortcut.
+			//
+			// The Individual case is deliberately NOT filled here from
+			// values.new_first_name - that's the raw text as typed, before
+			// contact_hooks.normalize_contact_first_name has run on it
+			// server-side inside create_minimal_contact's own Contact.insert().
+			// Setting customer_name from it directly used to skip
+			// normalization entirely (a name like "  Ahmed  " or one needing
+			// its Arabic-ending correction saved correctly onto the Contact
+			// but verbatim, with the stray spaces/wrong ending, onto the
+			// Customer). Leaving customer_name blank here lets
+			// customer_primary_contact's own field handler below
+			// (apply_contact_identity) fetch the Contact's own already-
+			// normalized full_name once it actually exists in the database -
+			// the same mechanism already relied on for the "pick an existing
+			// Contact" path, now covering create-new too instead of
+			// special-casing it with unnormalized text.
+			if (values.new_is_company && values.new_company_name && !frm.doc.customer_name) {
+				frm.set_value("customer_name", values.new_company_name);
 			}
 		},
 	});

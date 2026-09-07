@@ -18,11 +18,11 @@ def sync_lead_address_from_contact_links(doc, method=None):
 	"""Lead on_update hook: if this Lead has no Address Dynamic-Linked to
 	it yet, and its own auto-created Contact (native Lead.before_insert())
 	is already linked to some other doctype this app tracks (a Customer,
-	a Supplier, or a User) with an address, Dynamic-Link that Address
-	directly to this Lead too - the same cross-doctype backfill Customer/
-	Supplier/Employee already apply, adapted to Lead's own different
-	shape (no primary-address field to set, only a Dynamic Link to
-	create).
+	a Supplier, an Employee, or a User) with an address, Dynamic-Link that
+	Address directly to this Lead too - the same cross-doctype backfill
+	Customer/Supplier/Employee already apply, adapted to Lead's own
+	different shape (no primary-address field to set, only a Dynamic Link
+	to create).
 
 	on_update, not validate: Lead's own Contact only exists (and is only
 	Dynamic-Linked to this Lead) after the very first insert - before

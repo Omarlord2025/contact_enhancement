@@ -320,19 +320,20 @@ def ensure_contact_linked_to_parent(parent_doc, primary_contact_fieldname, conta
 	return ensure_doc_linked_to_parent(parent_doc, primary_contact_fieldname, "Contact", linked_doc=contact)
 
 
-_ADDRESS_LOOKUP_PRIORITY = ("Customer", "Supplier", "Lead", "User")
+_ADDRESS_LOOKUP_PRIORITY = ("Customer", "Supplier", "Employee", "Lead", "User")
 
 _PRIMARY_ADDRESS_FIELD_BY_DOCTYPE = {
 	"Customer": "customer_primary_address",
 	"Supplier": "supplier_primary_address",
+	"Employee": "employee_primary_address",
 }
 
 
 def _linked_address_for(doctype, name):
 	"""The one address _ADDRESS_LOOKUP_PRIORITY's given doctype+name
 	already resolves to, if any - a plain Link field read for Customer/
-	Supplier (both already keep this current via their own hooks), a
-	Dynamic Link lookup for Lead (never has its own address
+	Supplier/Employee (all three already keep this current via their own
+	hooks), a Dynamic Link lookup for Lead (never has its own address
 	field, only ever a Dynamic-Linked one) and User (this app's own
 	"Linked Addresses" section, api.user_addresses - the first one linked,
 	arbitrarily but deterministically by creation order, since a User can
@@ -359,8 +360,8 @@ def _linked_address_for(doctype, name):
 def resolve_address_from_contact_links(contact_name, exclude_doctype=None, exclude_name=None):
 	"""Look at every doctype a Contact is already Dynamic-Linked to, and
 	return the first address that connection already resolves to - in
-	order of superiority: Customer, then Supplier, then Lead, then User.
-	Used wherever a doctype with no "party" concept of
+	order of superiority: Customer, then Supplier, then Employee, then
+	Lead, then User. Used wherever a doctype with no "party" concept of
 	its own (Employee, Supplier, User) picks a Contact that turns out to
 	already be someone else's contact too, so a genuinely relevant address
 	doesn't have to be re-entered from scratch.
@@ -368,9 +369,14 @@ def resolve_address_from_contact_links(contact_name, exclude_doctype=None, exclu
 	Deliberately Customer-first, matching this app's own established
 	STRONG_PARTY_DOCTYPES ranking (api/duplicate_mobile_contacts.py) - a
 	Customer/Supplier relationship is the most authoritative, already-
-	enforced-mandatory source; Lead and User are the least (a Lead's own
-	address is never mandatory, and a User's own linked Address is just
-	one of potentially several with no "primary" concept at all).
+	enforced-mandatory source. Employee ranks just below those two, not
+	alongside them: employee_primary_address is a real, per-record Link
+	field kept current the same way Customer/Supplier's own are (so it's a
+	genuine source, not a guess), but Employee's own address is optional
+	rather than enforced-mandatory, which is what keeps it behind Customer/
+	Supplier here. Lead and User are the least authoritative of all: a
+	Lead's own address is never mandatory, and a User's own linked Address
+	is just one of potentially several with no "primary" concept at all.
 
 	Args:
 		contact_name: the Contact whose other links to search.
@@ -404,17 +410,15 @@ def resolve_address_from_contact_links(contact_name, exclude_doctype=None, exclu
 
 
 # Every doctype worth checking when aggregating *all* addresses a Contact
-# can reach - deliberately broader than _ADDRESS_LOOKUP_PRIORITY above
-# (which only ever needs a single best guess to backfill one field, so it
-# was never worth including Employee - a doctype this app only ever lets
-# *pick* a Contact, never resolve *from*, in that narrower use case).
-# Employee is a genuine address source here: employee_primary_address is
-# just as real a source as Customer/Supplier's own field once the goal is
-# "show every address connected to this person," not "what's the one most
-# authoritative guess."
-_ALL_ADDRESS_SOURCE_DOCTYPES = ("Customer", "Supplier", "Employee", "Lead", "User")
+# can reach. Same five doctypes _ADDRESS_LOOKUP_PRIORITY above now covers
+# (Employee was added there too, once it became a genuine resolution
+# source and not just a doctype this app lets *pick* a Contact) - order
+# doesn't matter here the way it does above, since this aggregates every
+# match instead of stopping at the first one, but there's no reason to
+# maintain a second, separately-typed-out doctype list for the same set.
+_ALL_ADDRESS_SOURCE_DOCTYPES = _ADDRESS_LOOKUP_PRIORITY
 
-_ADDRESS_FIELD_BY_SOURCE_DOCTYPE = dict(_PRIMARY_ADDRESS_FIELD_BY_DOCTYPE, Employee="employee_primary_address")
+_ADDRESS_FIELD_BY_SOURCE_DOCTYPE = _PRIMARY_ADDRESS_FIELD_BY_DOCTYPE
 
 
 def addresses_linked_to_many(names_by_doctype):

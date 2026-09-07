@@ -58,13 +58,16 @@ def sync_employee_contact_from_user(doc, method=None):
 
 def sync_employee_address_from_contact_links(doc, method=None):
 	"""Employee validate hook: if employee_primary_contact is already
-	linked to another doctype this app tracks (a Customer, a Supplier, a
-	Lead, or a User), backfill this Employee's own address from whichever
-	of those already has one, in order of superiority - see
-	utils.resolve_address_from_contact_links's own docstring for the
-	exact ordering and reasoning. The same cross-doctype backfill
-	supplier_hooks.sync_supplier_address_from_contact_links already does
-	for Supplier, reused here rather than reimplemented.
+	linked to another doctype this app tracks (a Customer, a Supplier,
+	another Employee sharing the same Contact, a Lead, or a User),
+	backfill this Employee's own address from whichever of those already
+	has one, in order of superiority - see utils.resolve_address_from_
+	contact_links's own docstring for the exact ordering and reasoning.
+	The same cross-doctype backfill supplier_hooks.sync_supplier_address_
+	from_contact_links already does for Supplier, reused here rather than
+	reimplemented. exclude_doctype/exclude_name below is what stops this
+	Employee's own (still blank) address from being read back as its own
+	source when it's the only Employee linked to this Contact.
 
 	Only-if-blank - never overwrites an address someone deliberately
 	picked here.
