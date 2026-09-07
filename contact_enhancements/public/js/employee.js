@@ -1,12 +1,18 @@
 // Copyright (c) 2026, Omar Sabry and contributors
 // For license information, please see license.txt
 
-// Phase 3 - proactive onload dialog, same UX as Customer/Supplier, but
-// dismissible (no_cancel: false) and never blocks save:
-// employee_primary_contact/employee_primary_address are both optional
-// (setup/custom_fields.py) - Employee records are routinely created in
-// batches by a small trusted HR group, so nothing here should obstruct
-// that the way a non-cancelable dialog would.
+// Phase 3 - proactive onload dialog, same UX as Customer/Supplier. The
+// dialog itself stays dismissible (no_cancel: false) - Employee records
+// are routinely created in batches by a small trusted HR group, and
+// forcing a non-cancelable modal there would have real cost for no real
+// duplicate-prevention gain. employee_primary_contact is nonetheless
+// required on a new Employee now (employee_hooks.
+// enforce_primary_contact_on_new_employee, a validate hook, not a static
+// reqd - see that function's own docstring for why); dismissing the
+// dialog just means the Link field itself still has to be filled in
+// before Save, the same way Customer's own disable_save()/enable_save()
+// gate below already works. employee_primary_address stays fully
+// optional (setup/custom_fields.py).
 
 frappe.ui.form.on("Employee", {
 	onload(frm) {
@@ -18,9 +24,17 @@ frappe.ui.form.on("Employee", {
 		frm.set_query("employee_primary_contact", () => ({
 			query: "contact_enhancements.api.contact_lookup.search_contact_by_phone",
 		}));
+
+		if (frm.is_new() && !frm.doc.employee_primary_contact) {
+			frm.disable_save();
+		}
 	},
 
 	employee_primary_contact(frm) {
+		if (frm.is_new() && frm.doc.employee_primary_contact) {
+			frm.enable_save();
+		}
+
 		// Live-prefill first_name (relabeled "Full Name" - setup/
 		// property_setters.py's create_employee_full_name_property_setters)
 		// from the picked Contact's own full_name, only if still blank -

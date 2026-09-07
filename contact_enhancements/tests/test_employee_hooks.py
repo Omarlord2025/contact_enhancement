@@ -7,6 +7,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from contact_enhancements.employee_hooks import (
+	enforce_primary_contact_on_new_employee,
 	link_employee_contact,
 	sync_employee_address_from_contact_links,
 	sync_employee_contact_from_user,
@@ -149,3 +150,64 @@ class TestLinkEmployeeContact(FrappeTestCase):
 	def test_noop_without_a_primary_contact(self):
 		employee = make_employee()
 		link_employee_contact(employee)  # must not raise
+
+
+class TestPrimaryContactRequirementIsGrandfathered(FrappeTestCase):
+	"""Mirrors test_customer_hooks.TestPrimaryContactRequirementIsGrandfathered
+	exactly - employee_primary_contact is required from now on, never
+	retroactively. A static reqd=1 would be evaluated on every save, not
+	just inserts, and would freeze every Employee that predates this
+	requirement - see enforce_primary_contact_on_new_employee's own
+	docstring."""
+
+	def test_a_new_employee_still_needs_a_contact(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Employee",
+				"first_name": frappe.generate_hash(length=10),
+				"gender": "Prefer not to say",
+				"date_of_birth": "1990-01-01",
+				"date_of_joining": "2020-01-01",
+			}
+		)
+		with self.assertRaises(frappe.ValidationError):
+			doc.insert(ignore_permissions=True)
+
+	def test_an_existing_employee_without_one_stays_editable(self):
+		employee = make_employee()  # make_employee sets ignore_mandatory itself
+		self.assertFalse(employee.employee_primary_contact)
+		employee.save(ignore_permissions=True)  # must not raise
+
+	def test_the_field_is_not_statically_mandatory(self):
+		# Guards against a reqd Property Setter creeping back in - that is
+		# exactly what would make the requirement retroactive.
+		meta = frappe.get_meta("Employee")
+		self.assertFalse(meta.get_field("employee_primary_contact").reqd)
+
+	def test_a_new_employee_with_a_contact_saves_normally(self):
+		contact = make_contact()
+		employee = frappe.get_doc(
+			{
+				"doctype": "Employee",
+				"first_name": frappe.generate_hash(length=10),
+				"gender": "Prefer not to say",
+				"date_of_birth": "1990-01-01",
+				"date_of_joining": "2020-01-01",
+				"employee_primary_contact": contact.name,
+			}
+		)
+		employee.insert(ignore_permissions=True)
+		self.assertTrue(employee.name)
+
+	def test_ignore_mandatory_bypasses_the_check(self):
+		employee = frappe.get_doc(
+			{
+				"doctype": "Employee",
+				"first_name": frappe.generate_hash(length=10),
+				"gender": "Prefer not to say",
+				"date_of_birth": "1990-01-01",
+				"date_of_joining": "2020-01-01",
+			}
+		)
+		employee.flags.ignore_mandatory = True
+		enforce_primary_contact_on_new_employee(employee)  # must not raise

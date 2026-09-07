@@ -184,6 +184,8 @@ doc_events = {
 			"contact_enhancements.employee_hooks.sync_employee_contact_from_user",
 			"contact_enhancements.employee_hooks.backfill_employee_name_from_primary_contact",
 			"contact_enhancements.employee_hooks.sync_employee_address_from_contact_links",
+			# Last, after the backfills above have had their chance.
+			"contact_enhancements.employee_hooks.enforce_primary_contact_on_new_employee",
 		],
 		"on_update": "contact_enhancements.employee_hooks.link_employee_contact",
 	},

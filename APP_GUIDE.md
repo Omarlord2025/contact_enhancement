@@ -36,7 +36,7 @@ It does this in three layers:
 | **Contact Phone** | Country, channel flags (WhatsApp/Telegram/Landline), E.164 storage, uniqueness |
 | **Customer** | Required primary contact on new records (address optional), contact picker dialog |
 | **Supplier** | Required primary contact on new records (address optional), contact picker dialog |
-| **Employee** | Optional primary contact and address, on-demand picker |
+| **Employee** | Required primary contact on new records (address optional), dismissible contact picker |
 | **User** | Optional primary contact, "Linked Addresses" panel |
 | **Lead** | Address inherited from the Contact's other links |
 | **Address** | Reused via its native Dynamic Link table — no new fields |
@@ -165,7 +165,8 @@ of whether any particular length is required of the name itself.
 
 ## 6. The contact requirement
 
-New **Customers** and new **Suppliers** need a primary **Contact**.
+New **Customers**, new **Suppliers**, and new **Employees** need a primary **Contact**.
+**User is deliberately excluded** — see the note at the end of this section for why.
 
 **No primary Address is ever required** — not on Customer, Supplier or
 Employee. The address is still resolved and filled in automatically wherever
@@ -179,12 +180,35 @@ This is enforced by validate hooks gated on `doc.is_new()` — **not** by a mand
 That is deliberate and important:
 
 > A static `reqd` is evaluated on *every* save, not just inserts. Making these fields
-> mandatory retroactively froze every Customer and Supplier created before the app existed —
-> a no-op re-save raised `MandatoryError`, blocking ERPNext's own flows, Data Import,
-> background jobs and other apps. Existing records are **grandfathered**: they stay editable.
+> mandatory retroactively froze every Customer/Supplier/Employee created before this
+> requirement existed on it — a no-op re-save raised `MandatoryError`, blocking ERPNext's
+> own flows, Data Import, background jobs and other apps. Existing records are
+> **grandfathered**: they stay editable.
 
-Both hooks honour `doc.flags.ignore_mandatory`, so Data Import and programmatic callers
+All three hooks honour `doc.flags.ignore_mandatory`, so Data Import and programmatic callers
 behave exactly as they would with a real mandatory field.
+
+Employee's own dialog (`public/js/employee.js`) stays dismissible (`no_cancel: false`) even
+though the field is now required — Employee records are routinely created in batches by a
+small trusted HR group, and forcing a non-cancelable modal there would have real cost for no
+real duplicate-prevention gain. Dismissing it just means the Link field itself still has to
+be filled in before Save; `frm.disable_save()`/`enable_save()` (the same gate Customer's own
+dialog uses) keeps an empty save from being possible without ever forcing the modal to stay
+open.
+
+> **Why User does NOT get this same treatment.** Making `user_primary_contact` mandatory the
+> same way was considered and rejected: unlike Employee, several genuine, core Frappe flows
+> insert a `User` directly with no way for this app to supply a Contact first and no
+> `ignore_mandatory` set - OAuth social login (`frappe/utils/oauth.py`), accepting a user
+> invitation (`frappe/core/doctype/user_invitation/user_invitation.py`), and the site setup
+> wizard's own first-admin-user creation (`frappe/desk/page/setup_wizard/setup_wizard.py`).
+> Making the field mandatory would break all three outright, with no fix available inside
+> this app (they're core Frappe, not something this app's own hooks run ahead of). The two
+> callers this app already knows about are both already safe - `custom_webshop`'s own signup
+> flow explicitly sets `user_primary_contact` before insert, and ERPNext's native
+> `Employee.create_user()` could be backfilled from the creating Employee's own contact if
+> this were ever revisited - but the three core-Frappe flows above have no such fix and are
+> reason enough to leave `User` as-is.
 
 ---
 
@@ -264,7 +288,7 @@ new one — without leaving the form.
 |---|---|---|
 | Customer | On opening a new Customer | **No** |
 | Supplier | On opening a new Supplier | **No** |
-| Employee | "Link / Find Contact" button | Yes |
+| Employee | On opening a new Employee | Yes |
 | User | On opening a new User | Yes |
 
 Search is debounced (300 ms, minimum 3 characters), matches name / email / phone in either
@@ -407,6 +431,7 @@ here — this page only ever queues what neither automatic rule could decide.
 | **Employee** | validate | `sync_employee_contact_from_user` |
 | | validate | `backfill_employee_name_from_primary_contact` |
 | | validate | `sync_employee_address_from_contact_links` |
+| | validate | `enforce_primary_contact_on_new_employee` |
 | | on_update | `link_employee_contact` |
 | **User** | validate | `validate_user_phone_before_contact_sync` |
 | | validate | `backfill_user_name_from_primary_contact` |
@@ -455,7 +480,7 @@ measure the duplicate count and the `ALTER TABLE` duration before touching produ
 bench --site <site> run-tests --app contact_enhancements
 ```
 
-**438 server tests.** There is also a browser test suite (Playwright) covering the creation
+**443 server tests.** There is also a browser test suite (Playwright) covering the creation
 flows, name rules across seven writing systems, and the address panels — see the developer
 notes in `CLAUDE.md`.
 
