@@ -86,8 +86,10 @@ Applied via Property Setters in `setup/property_setters.py`.
 **Renamed fields** — "First Name" becomes **"Full Name"** on Contact, Employee and User.
 The app treats a person's name as one field, not first/middle/last.
 
-**Hidden fields** — `Contact.middle_name`, `Contact.last_name`,
-`Contact Phone.is_primary_phone`, `Employee.employee_name`.
+**Hidden fields** — `Contact.middle_name`, `Contact Phone.is_primary_phone`,
+`Employee.employee_name`. (`Contact.last_name` is deliberately left **visible** — this
+site has Contacts with real data in it, and hiding it would make that data invisible in
+the UI. Don't hide it without first confirming it's genuinely blank everywhere.)
 
 **Quick Entry disabled** on Customer, Supplier and User. Frappe's Quick Entry dialog does not
 include the primary-contact field, so leaving it on would let someone create a record that
