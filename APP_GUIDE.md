@@ -61,6 +61,7 @@ Created by `setup/custom_fields.py`, applied on install and every migrate.
 | `custom_whatsapp` | Check | This number is on WhatsApp |
 | `custom_telegram` | Check | This number is on Telegram |
 | `custom_landline` | Check | This is a landline, not a mobile |
+| `custom_country_resolution` | Select (hidden) | How this row's country was decided — `Detected`, `Pattern`, `Manual`, or `Unresolved`. Blank for rows never touched by the historical backfill. Powers the Phone Country Resolution page, §8.5 |
 
 **Employee**
 | Field | Type | Purpose |
@@ -95,8 +96,10 @@ skips the contact requirement entirely.
 **Indexes added** (performance):
 `Customer.customer_primary_contact`, `Customer.customer_primary_address`,
 `Supplier.supplier_primary_contact`, `Employee.employee_primary_contact`,
-`User.user_primary_contact`, `Contact Phone.phone`, and `contact_person` on
-Quotation, Sales Order, Sales Invoice, Purchase Order, Purchase Invoice and Opportunity.
+`User.user_primary_contact`, `Contact Phone.phone`, `Contact.email_id`
+(duplicate-detection lookups), `Contact.full_name` (anchored-prefix name-duplicate
+lookups), and `contact_person` on Quotation, Sales Order, Sales Invoice, Purchase
+Order, Purchase Invoice and Opportunity.
 
 > **Note:** the app does **not** make any field statically mandatory (`reqd`). See §6.
 
@@ -143,8 +146,11 @@ of whether any particular length is required of the name itself.
 - Validated against the row's own `country` using the `phonenumbers` library — every
   country, not just Egypt
 - Formatting noise (spaces, dashes, parens, dots) is stripped before parsing
-- A number carrying its own country code is accepted even if it doesn't match the selected
-  country
+- If a number carries its own unambiguous country code (a `+`/`00` prefix) that doesn't match
+  the row's currently selected `country`, the row's `country` is **auto-corrected to match the
+  number** before validation runs — it's never just accepted against the wrong country. A
+  plain local-format number (no country code of its own) can't trigger this and is still
+  checked against whatever country is selected
 - `custom_phone_national` is auto-populated with the bare local digits so staff can still
   search the way they type
 - **A landline cannot also be WhatsApp/Telegram** — the flags are mutually exclusive and
@@ -269,6 +275,16 @@ An admin page listing every mobile number shared by more than one Contact, worst
 first, with the business weight of each (linked parties, transaction counts) so you can tell
 which to keep. Merging is one click.
 
+### 8.5 Phone Country Resolution page
+
+An admin page listing every `Contact Phone` row the historical backfill (§11) couldn't
+resolve automatically (`custom_country_resolution == "Unresolved"`) — no international
+prefix to detect, and not shaped like an Egyptian mobile number either. For each row, the
+administrator picks the real country (and landline flag) from a dropdown; saving runs the
+row through the normal Contact validate hook chain exactly as a manual edit would, and
+marks it `Manual`. Rows a brand-new save auto-detects or auto-corrects (§5.3) never land
+here — this page only ever queues what neither automatic rule could decide.
+
 ---
 
 ## 9. Whitelisted API
@@ -279,6 +295,7 @@ which to keep. Merging is one click.
 | `create_minimal_contact(first_name, phone, country=None)` | Create a Contact with just a name and number |
 | `search_contact_by_phone(...)` | Link-field query for primary-contact fields |
 | `search_contacts_with_details(txt, start=0, page_len=10)` | Rich match list for the picker dialog |
+| `search_contacts_by_name_prefix(txt, page_len=10)` | "Someone with this name exists" lookup (anchored prefix match), §5.2 |
 | `get_address_from_contact_links(contact, ...)` | Best single address reachable from a Contact |
 | `get_addresses_for_contact(contact)` | Every address, with source labels |
 
@@ -303,6 +320,13 @@ which to keep. Merging is one click.
 |---|---|
 | `get_report_data()` | Backing data for the admin page |
 
+### `api/phone_country_resolution.py`
+| Method | Purpose |
+|---|---|
+| `get_unresolved_phone_country_report()` | Every Contact Phone row still awaiting manual resolution, §8.5 |
+| `list_countries()` | Country dropdown for the resolution page |
+| `resolve_phone_country_row(contact, contact_phone_row, country, landline=0)` | Apply an administrator's manual country choice to one row |
+
 ### `api/lead_lookup.py`
 | Method | Purpose |
 |---|---|
@@ -326,10 +350,12 @@ which to keep. Merging is one click.
 | | validate | `enforce_unique_mobile_number` |
 | | validate | `warn_if_duplicate_contact` |
 | | on_update | `propagate_contact_changes_to_linked_doctypes` |
-| **Customer** | validate | `sync_customer_from_primary_contact` |
-| | validate | `enforce_primary_contact_and_address_on_new_customer` |
+| **Customer** | before_naming | `apply_contact_identity_before_naming` ¹ |
+| | validate | `sync_customer_from_primary_contact` |
+| | validate | `enforce_primary_contact_on_new_customer` |
 | | on_update | `link_primary_contact` |
-| **Supplier** | validate | `backfill_supplier_primary_contact_from_dynamic_link` |
+| **Supplier** | before_naming | `apply_contact_identity_before_naming` ¹ |
+| | validate | `backfill_supplier_primary_contact_from_dynamic_link` |
 | | validate | `backfill_supplier_name_from_primary_contact` |
 | | validate | `sync_supplier_address_from_contact_links` |
 | | validate | `enforce_primary_contact_on_new_supplier` |
@@ -342,6 +368,10 @@ which to keep. Merging is one click.
 | | validate | `backfill_user_name_from_primary_contact` |
 | | on_update | `link_user_contact` |
 | **Lead** | on_update | `sync_lead_address_from_contact_links` |
+
+¹ Registered on `before_naming`, not `validate` — ERPNext's own `Customer.autoname()` /
+`Supplier.autoname()` read `customer_name`/`supplier_name` directly, and naming runs before
+validate, so a validate-time backfill would be too late on an insert.
 
 **JavaScript** — `contact_picker_dialog.js` and `linked_addresses.js` load on every Desk page
 (they're shared components); `customer.js`, `contact.js`, `supplier.js`, `employee.js` and
@@ -380,7 +410,7 @@ measure the duplicate count and the `ALTER TABLE` duration before touching produ
 bench --site <site> run-tests --app contact_enhancements
 ```
 
-**407 server tests.** There is also a browser test suite (Playwright) covering the creation
+**438 server tests.** There is also a browser test suite (Playwright) covering the creation
 flows, name rules across seven writing systems, and the address panels — see the developer
 notes in `CLAUDE.md`.
 
@@ -400,6 +430,7 @@ notes in `CLAUDE.md`.
 
 ```
 contact_enhancements/
+├── install.py             after_install hook
 ├── contact_hooks.py       Name + phone rules, uniqueness, propagation  ← the core
 ├── customer_hooks.py      Customer linking, Lead snapshot
 ├── supplier_hooks.py      Supplier linking + backfills
@@ -407,11 +438,12 @@ contact_enhancements/
 ├── user_hooks.py          User linking, phone pre-clean
 ├── lead_hooks.py          Lead address inheritance
 ├── utils.py               Shared helpers — import from here
-├── api/                   Whitelisted endpoints
+├── api/                   Whitelisted endpoints (incl. phone_country_resolution.py, §8.5)
 ├── setup/                 Custom fields + property setters
 ├── patches/               One-time migrations
+├── page/                  Duplicate Mobile Contacts, Phone Country Resolution (§8.4, §8.5)
 ├── public/js/             Dialogs and panels
-└── tests/                 407 tests
+└── tests/                 438 tests
 ```
 
 `CLAUDE.md` in the app root holds the engineering standards, the performance checklist, and a
