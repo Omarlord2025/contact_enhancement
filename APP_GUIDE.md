@@ -201,6 +201,21 @@ the parent held wide locks inside another document's save and caused database de
 also bumped the Contact's `modified` timestamp, invalidating copies other code was holding.
 Permission is checked explicitly before the insert, exactly as the old save did.
 
+> **Why, concretely** (`utils._insert_dynamic_link` / `utils._check_may_link`): the old code
+> ran `contact_doc.append("links", {...}); contact_doc.save()` from inside another
+> document's own `on_update` hook — a full save, not a one-row change. That diffs every
+> child table (phone numbers, emails, links), `UPDATE`s the parent row, and does it all
+> inside a transaction already in progress, which is a wide, long-held lock footprint under
+> concurrency — every `QueryDeadlockError` this app hit traced back to exactly that save.
+> It also bumps the Contact's `modified` timestamp; if some other code in the same save
+> cycle was holding an in-memory copy of that Contact loaded earlier, that copy is now
+> stale, and its next `.save()` raises `TimestampMismatchError`. Inserting the single
+> Dynamic Link row directly touches one row in one table, so neither problem exists — but
+> skipping the save also skips the write-permission check `.save()` used to provide for
+> free, so `_check_may_link` reproduces that exact check (`frappe.has_permission(...,
+> "write", ...)`, honouring `ignore_permissions`) and runs it *before* the insert, so
+> bypassing the save never becomes a privilege-escalation path.
+
 ### 7.2 Address inheritance
 
 If a Contact is already linked to a Customer with an address, and the same person is added
@@ -250,6 +265,15 @@ new one — without leaving the form.
 Search is debounced (300 ms, minimum 3 characters), matches name / email / phone in either
 local or international format, and shows enough of each match — company, designation, email,
 phone numbers with channel tags — to confirm the right person.
+
+> **A third guard alongside debouncing** (`contact_picker_dialog.js`'s `latest_search` /
+> `latest_name_search`): debouncing only limits how often a request is *sent* — it does
+> nothing about the order responses come *back* in. A slow response for an earlier, narrower
+> query (e.g. "Ah") can still arrive after the response for what you've since typed ("Ahmed"),
+> since response time varies with how much of the Contact/Contact Phone join a given query has
+> to scan. Each search increments a monotonic counter, and its callback checks
+> `search_id !== latest_search` before rendering — so a late-arriving stale response is
+> silently discarded instead of overwriting the correct, already-rendered results.
 
 Each dialog collects the extra fields its own doctype needs: Customer gets
 individual/company + customer group; Supplier gets supplier type; **Employee gets gender,
@@ -386,6 +410,7 @@ validate, so a validate-time backfill would be too late on an insert.
 ```bash
 bench get-app contact_enhancements <repo-url>
 bench --site <site> install-app contact_enhancements
+bench setup requiremnets
 bench --site <site> migrate
 ```
 
@@ -423,7 +448,7 @@ notes in `CLAUDE.md`.
 | Limitation | Detail |
 |---|---|
 | **Customer group default** | The dialog's `customer_group` can default to a group node, which ERPNext rejects. Pick a leaf group |
-| **Duplicate warning visibility** | `warn_if_duplicate_contact` uses `msgprint`, which can surface on customer-facing pages if a Contact is created there |
+| **Duplicate warning visibility** | `warn_if_duplicate_contact` uses `msgprint`, which lands in `_server_messages` on any Contact save regardless of caller — including `custom_webshop`'s own signup flow (`signup/linking._persist_contact`, a real, non-Desk `Contact.save()`). In practice that specific flow's frontend (`store.js`'s `fetch`-based `Store.call`) only reads `_server_messages` on an error/exception response, and this hook never raises — so today it never actually renders to a signup customer, only sits unread in the raw response body. The theoretical risk (a *future* caller that renders `_server_messages` the way `frappe.call` does) is still real; the currently-known caller isn't actually exposed by it |
 | **JS rule mirror** | The name rules exist in both Python and JavaScript. There is no JS test infrastructure, so keeping them in sync is a review discipline — they have drifted before |
 
 ---
