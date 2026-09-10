@@ -97,10 +97,9 @@ def classify_contact_duplicate(doc):
 	exclude = doc.name if not doc.is_new() else None
 
 	phone_match = False
-	for row in doc.get("phone_nos", []):
-		if row.phone and find_contacts_by_phone(row.phone, exclude=exclude):
-			phone_match = True
-			break
+	phones = [row.phone for row in doc.get("phone_nos", []) if row.phone]
+	if phones:
+		phone_match = any(find_contacts_by_phone(p, exclude=exclude) for p in phones)
 
 	email_match = bool(doc.email_id and find_contacts_by_email(doc.email_id, exclude=exclude))
 

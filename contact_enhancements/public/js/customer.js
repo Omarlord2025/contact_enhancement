@@ -60,7 +60,10 @@ function show_dialog_call_error(message) {
 
 frappe.ui.form.on("Customer", {
 	onload(frm) {
-		if (!frm.is_new()) return;
+		if (!frm.is_new()) {
+			frm.__ce_original_party_name = frm.doc.customer_name;
+			return;
+		}
 
 		// Snapshot the actual values Frappe pre-filled on THIS form the
 		// moment it was created, before anything else can touch them.
@@ -87,6 +90,11 @@ frappe.ui.form.on("Customer", {
 	},
 
 	refresh(frm) {
+		// Stash original customer_name whenever the form is clean, before edits occur
+		if (!frm.is_new() && !frm.is_dirty()) {
+			frm.__ce_original_party_name = frm.doc.customer_name;
+		}
+
 		frm.set_query("customer_primary_contact", () => ({
 			query: "contact_enhancements.api.contact_lookup.search_contact_by_phone",
 		}));
@@ -140,6 +148,7 @@ frappe.ui.form.on("Customer", {
 				// snapshot server-side on save regardless, so this is a
 				// live-preview convenience failing, not the whole flow -
 				// but the user should still know why nothing changed.
+				apply_address_fallback(frm);
 				show_dialog_call_error(
 					__(
 						"Couldn't load this Contact's linked Lead details right now. The fields will still be filled in correctly when you save."
@@ -147,6 +156,25 @@ frappe.ui.form.on("Customer", {
 				);
 			},
 		});
+	},
+
+	before_save(frm) {
+		// Offer to propagate a Customer name change to linked Contacts & linked records before saving.
+		const config = {
+			doctype: "Customer",
+			name_field: "customer_name",
+			type_field: "customer_type",
+			primary_contact_field: "customer_primary_contact",
+		};
+		if (window.contact_enhancements && contact_enhancements.maybe_show_name_sync_dialog) {
+			return contact_enhancements.maybe_show_name_sync_dialog(frm, config);
+		} else {
+			return new Promise((resolve) => {
+				frappe.require("/assets/contact_enhancements/js/name_sync_dialog.js", () => {
+					contact_enhancements.maybe_show_name_sync_dialog(frm, config).then(resolve).catch(resolve);
+				});
+			});
+		}
 	},
 });
 
@@ -316,8 +344,8 @@ function show_mandatory_contact_dialog(frm) {
 	// picking or creating a Contact.
 	contact_enhancements.show_contact_picker_dialog(frm, {
 		primary_contact_fieldname: "customer_primary_contact",
-		title: __("Link a Contact to this Customer"),
-		no_cancel: true,
+		title: __("قائمة التعبئة السريعة"),
+		no_cancel: false,
 		extra_dialog_fields: [
 			// Customer Group only applies when creating a new Contact here
 			// (set on this Customer once creation succeeds, in
@@ -340,7 +368,6 @@ function show_mandatory_contact_dialog(frm) {
 				fieldtype: "Data",
 				fieldname: "new_company_name",
 				label: __("Company Name"),
-				description: __("Used as this Customer's name."),
 				depends_on: "eval:doc.new_is_company",
 			},
 		],

@@ -124,7 +124,7 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 	if (frm.doc[config.primary_contact_fieldname]) return;
 
 	const dialog = new frappe.ui.Dialog({
-		title: config.title,
+		title: config.title || __("قائمة التعبئة السريعة"),
 		static: !!config.no_cancel,
 		fields: [
 			{
@@ -133,15 +133,15 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 				label: __("Country"),
 				options: "Country",
 				default: "Egypt",
-				description: __("Searchable across every country - used to check the phone number format below."),
+				description: __("اختر الدولة المرتبطة برقم الهاتف"),
+				placeholder: __("اختر الدولة المرتبطة برقم الهاتف"),
 			},
 			{
 				fieldtype: "Data",
 				fieldname: "phone",
 				label: __("Phone Number"),
-				description: __(
-					"Search for an existing Contact by phone number, or enter one below to create a new Contact."
-				),
+				description: __("ادخل رقم الهاتف بكود الدولة او بدونه"),
+				placeholder: __("يمكن استخدام هذا الحقل للبحث عن رقم مسجل بالفعل"),
 			},
 			{ fieldtype: "HTML", fieldname: "results" },
 			{ fieldtype: "Section Break", label: __("Create a New Contact") },
@@ -158,6 +158,10 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 			...(config.extra_dialog_fields || []),
 		],
 		primary_action_label: __("Create New Contact"),
+		secondary_action_label: config.no_cancel ? null : __("إغلاق"),
+		secondary_action() {
+			dialog.hide();
+		},
 		primary_action(values) {
 			if (!values.country) {
 				frappe.msgprint(__("Select a Country."));
@@ -448,4 +452,11 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 	}
 
 	dialog.show();
+
+	if (dialog.fields_dict.country && dialog.fields_dict.country.$input) {
+		dialog.fields_dict.country.$input.attr("placeholder", __("اختر الدولة المرتبطة برقم الهاتف"));
+	}
+	if (dialog.fields_dict.phone && dialog.fields_dict.phone.$input) {
+		dialog.fields_dict.phone.$input.attr("placeholder", __("يمكن استخدام هذا الحقل للبحث عن رقم مسجل بالفعل"));
+	}
 };

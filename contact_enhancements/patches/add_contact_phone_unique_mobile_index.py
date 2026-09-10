@@ -33,57 +33,8 @@ index), so a second `bench migrate` after resolving a fresh conflict
 doesn't error on "column/index already exists".
 """
 
-import frappe
-
-from contact_enhancements.api.contact_dedupe import (
-	find_duplicate_mobile_contacts,
-	find_duplicate_phone_rows_within_contact,
-)
-
-UNIQUENESS_COLUMN = "phone_uniqueness_key"
-UNIQUENESS_INDEX = "phone_uniqueness_key_index"
+from contact_enhancements.setup.schema import ensure_contact_phone_uniqueness_constraint
 
 
 def execute():
-	duplicates = find_duplicate_mobile_contacts()
-	if duplicates:
-		total_contacts = sum(len(entry["contacts"]) for entry in duplicates)
-		frappe.throw(
-			f"contact_enhancements: cannot add the mobile-number uniqueness constraint - "
-			f"{len(duplicates)} duplicate mobile number(s) still exist across {total_contacts} "
-			f"Contacts. Resolve every group first (merge, reclassify as landline, or fix a "
-			f"typo) - see contact_enhancements.patches.report_duplicate_mobile_contacts's own "
-			f"Error Log entries, or call find_duplicate_mobile_contacts() directly, for exactly "
-			f"which Contacts conflict. Re-run `bench migrate` once every group is resolved."
-		)
-
-	within_contact_duplicates = find_duplicate_phone_rows_within_contact()
-	if within_contact_duplicates:
-		frappe.throw(
-			f"contact_enhancements: cannot add the mobile-number uniqueness constraint - "
-			f"{len(within_contact_duplicates)} Contact(s) have the same mobile number entered "
-			f"twice on their own phone_nos table (a different problem from cross-Contact "
-			f"duplicates - see find_duplicate_phone_rows_within_contact's own docstring). Call "
-			f"contact_dedupe.dedupe_contact_phone_rows(contact, phone) for each one listed, or "
-			f"resolve directly on the Contact form. Re-run `bench migrate` once every one is "
-			f"resolved: {within_contact_duplicates}"
-		)
-
-	if UNIQUENESS_COLUMN not in frappe.db.get_table_columns("Contact Phone"):
-		# sql_ddl, not plain sql() - a DDL statement like ALTER TABLE can cause
-		# an implicit commit, which frappe.db.sql() refuses to run inside an
-		# open transaction (ImplicitCommitError); sql_ddl commits first itself.
-		frappe.db.sql_ddl(
-			f"ALTER TABLE `tabContact Phone` ADD COLUMN `{UNIQUENESS_COLUMN}` VARCHAR(140) "
-			f"GENERATED ALWAYS AS (CASE WHEN `custom_landline` = 0 THEN `phone` ELSE NULL END) STORED"
-		)
-		print(f"contact_enhancements: added generated column {UNIQUENESS_COLUMN} on Contact Phone.")
-
-	existing_index = frappe.db.sql(
-		"SHOW INDEX FROM `tabContact Phone` WHERE Key_name = %s", UNIQUENESS_INDEX
-	)
-	if not existing_index:
-		frappe.db.sql_ddl(
-			f"ALTER TABLE `tabContact Phone` ADD UNIQUE INDEX `{UNIQUENESS_INDEX}` (`{UNIQUENESS_COLUMN}`)"
-		)
-		print(f"contact_enhancements: added unique index {UNIQUENESS_INDEX} on Contact Phone.")
+	ensure_contact_phone_uniqueness_constraint()

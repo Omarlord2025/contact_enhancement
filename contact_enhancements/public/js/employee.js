@@ -81,7 +81,7 @@ function show_reactive_contact_dialog(frm) {
 
 	contact_enhancements.show_contact_picker_dialog(frm, {
 		primary_contact_fieldname: "employee_primary_contact",
-		title: __("Link a Contact to this Employee"),
+		title: __("قائمة التعبئة السريعة"),
 		no_cancel: false,
 		// Gender/Date of Birth/Date of Joining are all natively reqd=1 on
 		// Employee (confirmed via frappe.get_meta) - captured here too, in

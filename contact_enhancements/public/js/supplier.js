@@ -10,11 +10,19 @@
 
 frappe.ui.form.on("Supplier", {
 	onload(frm) {
-		if (!frm.is_new()) return;
+		if (!frm.is_new()) {
+			frm.__ce_original_party_name = frm.doc.supplier_name;
+			return;
+		}
 		show_mandatory_contact_dialog(frm);
 	},
 
 	refresh(frm) {
+		// Stash original supplier_name whenever the form is clean, before edits occur
+		if (!frm.is_new() && !frm.is_dirty()) {
+			frm.__ce_original_party_name = frm.doc.supplier_name;
+		}
+
 		frm.set_query("supplier_primary_contact", () => ({
 			query: "contact_enhancements.api.contact_lookup.search_contact_by_phone",
 		}));
@@ -54,6 +62,25 @@ frappe.ui.form.on("Supplier", {
 		apply_contact_identity(frm);
 
 		apply_address_fallback(frm);
+	},
+
+	before_save(frm) {
+		// Offer to propagate a Supplier name change to linked Contacts & linked records before saving.
+		const config = {
+			doctype: "Supplier",
+			name_field: "supplier_name",
+			type_field: "supplier_type",
+			primary_contact_field: "supplier_primary_contact",
+		};
+		if (window.contact_enhancements && contact_enhancements.maybe_show_name_sync_dialog) {
+			return contact_enhancements.maybe_show_name_sync_dialog(frm, config);
+		} else {
+			return new Promise((resolve) => {
+				frappe.require("/assets/contact_enhancements/js/name_sync_dialog.js", () => {
+					contact_enhancements.maybe_show_name_sync_dialog(frm, config).then(resolve).catch(resolve);
+				});
+			});
+		}
 	},
 });
 
@@ -133,8 +160,8 @@ function show_mandatory_contact_dialog(frm) {
 	// without picking or creating a Contact.
 	contact_enhancements.show_contact_picker_dialog(frm, {
 		primary_contact_fieldname: "supplier_primary_contact",
-		title: __("Link a Contact to this Supplier"),
-		no_cancel: true,
+		title: __("قائمة التعبئة السريعة"),
+		no_cancel: false,
 		extra_dialog_fields: [
 			// A plain Select bound to Supplier's own 3 native options -
 			// not a hand-rolled checkbox pair like Customer's Individual/

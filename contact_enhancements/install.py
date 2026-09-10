@@ -13,6 +13,7 @@ from contact_enhancements.setup.property_setters import (
 	create_supplier_contact_property_setters,
 	create_user_contact_property_setters,
 )
+from contact_enhancements.setup.schema import ensure_contact_phone_uniqueness_constraint
 
 
 def after_install():
@@ -26,3 +27,4 @@ def after_install():
 	create_supplier_contact_property_setters()
 	create_employee_full_name_property_setters()
 	create_user_contact_property_setters()
+	ensure_contact_phone_uniqueness_constraint()

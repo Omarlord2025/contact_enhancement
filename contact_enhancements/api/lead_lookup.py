@@ -247,3 +247,73 @@ def get_lead_snapshot_for_contact(contact_name):
 	snapshot = _lead_snapshot(lead_name)
 	snapshot["lead_name"] = lead_name
 	return snapshot
+
+
+@frappe.whitelist()
+def get_contact_snapshot_for_lead(contact_name):
+	"""Return snapshot data from a Contact to prefill a Lead form."""
+	if not contact_name or not frappe.db.exists("Contact", contact_name):
+		return None
+
+	contact = frappe.get_doc("Contact", contact_name)
+
+	# Mobile / Phone / WhatsApp / Country resolution
+	mobile_no = None
+	phone = None
+	whatsapp_no = None
+	country = None
+
+	for row in contact.phone_nos:
+		if not country and row.country:
+			country = row.country
+
+		if getattr(row, "custom_whatsapp", 0) and not whatsapp_no:
+			whatsapp_no = row.phone
+
+		if getattr(row, "is_primary_mobile_no", 0):
+			mobile_no = row.phone
+		elif not mobile_no and not getattr(row, "custom_landline", 0):
+			mobile_no = row.phone
+
+		if getattr(row, "is_primary_phone", 0) or getattr(row, "custom_landline", 0):
+			phone = row.phone
+
+	# Fallbacks if primary mobile or phone not specifically marked
+	if not mobile_no and contact.phone_nos:
+		mobile_no = contact.phone_nos[0].phone
+	if not whatsapp_no:
+		whatsapp_no = mobile_no
+
+	# Primary email
+	email_id = None
+	for row in contact.email_ids:
+		if row.is_primary:
+			email_id = row.email_id
+			break
+	if not email_id and contact.email_ids:
+		email_id = contact.email_ids[0].email_id
+	if not email_id:
+		email_id = contact.email_id
+
+	# Address fallback
+	from contact_enhancements.utils import resolve_address_from_contact_links
+
+	address = resolve_address_from_contact_links(contact_name, exclude_doctype="Lead")
+
+	return {
+		"contact_name": contact_name,
+		"lead_name": contact.full_name or contact.first_name,
+		"first_name": contact.first_name,
+		"last_name": contact.last_name,
+		"salutation": contact.salutation,
+		"gender": contact.gender,
+		"job_title": contact.designation,
+		"company_name": contact.company_name,
+		"mobile_no": mobile_no,
+		"phone": phone,
+		"whatsapp_no": whatsapp_no,
+		"email_id": email_id,
+		"country": country or "Egypt",
+		"address": address,
+	}
+

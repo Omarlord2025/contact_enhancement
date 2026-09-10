@@ -56,3 +56,72 @@ class TestSyncLeadAddressFromContactLinks(FrappeTestCase):
 			{"parenttype": "Address", "link_doctype": "Lead", "link_name": lead.name}, "parent"
 		)
 		self.assertIsNone(linked)
+
+
+class TestLeadPrimaryContactIntegration(FrappeTestCase):
+	def test_lead_with_existing_primary_contact_bypasses_duplicate_creation(self):
+		from contact_enhancements.tests.test_lead_lookup import _random_mobile_no, _random_name, make_contact
+
+		mobile = _random_mobile_no()
+		contact = make_contact(first_name=_random_name(), phone_nos=[mobile])
+
+		# Insert a Lead pointing to this existing contact
+		lead = frappe.get_doc({
+			"doctype": "Lead",
+			"lead_primary_contact": contact.name,
+			"first_name": "TestLead",
+		})
+		lead.insert(ignore_permissions=True)
+
+		# Check that contact is linked to this Lead
+		contact.reload()
+		self.assertTrue(contact.has_link("Lead", lead.name))
+
+		# Verify no duplicate contact was created with this mobile
+		matching_contacts = frappe.get_all(
+			"Contact Phone",
+			filters={"phone": ["like", f"%{mobile[-8:]}%"]},
+			fields=["parent"],
+			distinct=True,
+		)
+		self.assertEqual(len(matching_contacts), 1)
+		self.assertEqual(matching_contacts[0].parent, contact.name)
+
+	def test_lead_backfills_from_primary_contact(self):
+		from contact_enhancements.tests.test_lead_lookup import _random_mobile_no, _random_name, make_contact
+
+		mobile = _random_mobile_no()
+		contact = make_contact(
+			first_name=_random_name(),
+			company_name="Auto Sync Org",
+			phone_nos=[mobile],
+		)
+
+		lead = frappe.get_doc({
+			"doctype": "Lead",
+			"lead_primary_contact": contact.name,
+		})
+		lead.insert(ignore_permissions=True)
+
+		self.assertEqual(lead.first_name, contact.first_name)
+		self.assertEqual(lead.company_name, "Auto Sync Org")
+		self.assertEqual(lead.mobile_no, contact.phone_nos[0].phone)
+
+	def test_get_contact_snapshot_for_lead(self):
+		from contact_enhancements.api.lead_lookup import get_contact_snapshot_for_lead
+		from contact_enhancements.tests.test_lead_lookup import _random_mobile_no, _random_name, make_contact
+
+		mobile = _random_mobile_no()
+		contact = make_contact(
+			first_name=_random_name(),
+			company_name="Acme Inc",
+			phone_nos=[mobile],
+		)
+
+		snapshot = get_contact_snapshot_for_lead(contact.name)
+		self.assertIsNotNone(snapshot)
+		self.assertEqual(snapshot["first_name"], contact.first_name)
+		self.assertEqual(snapshot["company_name"], "Acme Inc")
+		self.assertEqual(snapshot["mobile_no"], contact.phone_nos[0].phone)
+
+

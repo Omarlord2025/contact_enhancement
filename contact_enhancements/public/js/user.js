@@ -65,7 +65,7 @@ function show_user_onboarding_dialog(frm) {
 
 	contact_enhancements.show_contact_picker_dialog(frm, {
 		primary_contact_fieldname: "user_primary_contact",
-		title: __("Set Up this User"),
+		title: __("قائمة التعبئة السريعة"),
 		no_cancel: false,
 		extra_dialog_fields: [
 			{
@@ -81,7 +81,6 @@ function show_user_onboarding_dialog(frm) {
 				fieldtype: "Data",
 				fieldname: "email",
 				label: __("Email"),
-				description: __("This User's own login email - left blank to reuse the picked Contact's own email, if it has one."),
 			},
 			{
 				fieldtype: "Link",

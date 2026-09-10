@@ -10,28 +10,67 @@ itself, not backfilling a field.
 """
 
 import frappe
+from contact_enhancements.api.lead_lookup import (
+	_sync_whatsapp_to_contact,
+	get_contact_snapshot_for_lead,
+)
+from contact_enhancements.utils import (
+	_insert_dynamic_link,
+	dynamic_link_lookup,
+	ensure_contact_linked_to_parent,
+	resolve_address_from_contact_links,
+)
 
-from contact_enhancements.utils import dynamic_link_lookup, resolve_address_from_contact_links
+
+def backfill_lead_from_primary_contact(doc, method=None):
+	"""Lead validate hook: if lead_primary_contact is set, backfill blank Lead
+	fields from the Contact's snapshot.
+	"""
+	if not doc.get("lead_primary_contact"):
+		return
+
+	snapshot = get_contact_snapshot_for_lead(doc.lead_primary_contact)
+	if not snapshot:
+		return
+
+	for field in (
+		"lead_name",
+		"first_name",
+		"last_name",
+		"company_name",
+		"mobile_no",
+		"phone",
+		"whatsapp_no",
+		"email_id",
+		"country",
+		"gender",
+		"salutation",
+		"job_title",
+	):
+		if not doc.get(field) and snapshot.get(field):
+			doc.set(field, snapshot[field])
+
+	if doc.get("whatsapp_no"):
+		try:
+			contact = frappe.get_doc("Contact", doc.lead_primary_contact)
+			_sync_whatsapp_to_contact(contact, doc)
+			if contact.is_dirty():
+				contact.save(ignore_permissions=True)
+		except Exception:
+			pass
+
+
+def link_lead_contact(doc, method=None):
+	"""Lead on_update hook: guarantee that lead_primary_contact is
+	Dynamic-Linked to this Lead in Contact.links.
+	"""
+	if doc.get("lead_primary_contact"):
+		ensure_contact_linked_to_parent(doc, "lead_primary_contact")
 
 
 def sync_lead_address_from_contact_links(doc, method=None):
 	"""Lead on_update hook: if this Lead has no Address Dynamic-Linked to
-	it yet, and its own auto-created Contact (native Lead.before_insert())
-	is already linked to some other doctype this app tracks (a Customer,
-	a Supplier, an Employee, or a User) with an address, Dynamic-Link that
-	Address directly to this Lead too - the same cross-doctype backfill
-	Customer/Supplier/Employee already apply, adapted to Lead's own
-	different shape (no primary-address field to set, only a Dynamic Link
-	to create).
-
-	on_update, not validate: Lead's own Contact only exists (and is only
-	Dynamic-Linked to this Lead) after the very first insert - before
-	that, doc.name isn't even assigned yet, so there's nothing yet for
-	dynamic_link_lookup to find.
-
-	Args:
-		doc: the Lead document that was just saved.
-		method: unused, present for the doc_events hook signature.
+	it yet, Dynamic-Link an Address from the linked Contact.
 	"""
 	existing = dynamic_link_lookup(
 		{"parenttype": "Address", "link_doctype": "Lead", "link_name": doc.name}, "parent"
@@ -39,7 +78,7 @@ def sync_lead_address_from_contact_links(doc, method=None):
 	if existing:
 		return
 
-	contact_name = dynamic_link_lookup(
+	contact_name = doc.get("lead_primary_contact") or dynamic_link_lookup(
 		{"parenttype": "Contact", "link_doctype": "Lead", "link_name": doc.name}, "parent"
 	)
 	if not contact_name:
@@ -51,6 +90,5 @@ def sync_lead_address_from_contact_links(doc, method=None):
 	if not address_name:
 		return
 
-	address = frappe.get_doc("Address", address_name)
-	address.append("links", {"link_doctype": "Lead", "link_name": doc.name})
-	address.save(ignore_permissions=True)
+	_insert_dynamic_link("Address", address_name, "Lead", doc.name)
+

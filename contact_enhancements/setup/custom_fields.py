@@ -186,6 +186,17 @@ CONTACT_ENHANCEMENTS_CUSTOM_FIELDS = {
 			"insert_after": "linked_addresses_section",
 		},
 	],
+	"Lead": [
+		{
+			"fieldname": "lead_primary_contact",
+			"fieldtype": "Link",
+			"options": "Contact",
+			"label": "Lead Primary Contact",
+			"insert_after": "contact_info_tab",
+			"description": "Reselect, if the chosen contact is edited after save",
+			"search_index": 1,
+		},
+	],
 }
 
 

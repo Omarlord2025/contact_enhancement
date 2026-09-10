@@ -32,8 +32,12 @@ app_license = "mit"
 # these have to be genuine app_include_js entries instead, loaded on
 # every Desk page.
 app_include_js = [
-	"/assets/contact_enhancements/js/contact_picker_dialog.js",
-	"/assets/contact_enhancements/js/linked_addresses.js",
+	"/assets/contact_enhancements/js/contact_picker_dialog.js?v=3",
+	"/assets/contact_enhancements/js/linked_addresses.js?v=3",
+	# Post-save dialog that offers to sync linked Contact names when a
+	# Customer/Supplier name changes.  Shared by customer.js and supplier.js,
+	# so it must be a genuine app_include rather than a doctype_js entry.
+	"/assets/contact_enhancements/js/name_sync_dialog.js?v=5",
 ]
 
 # include js, css files in header of web template
@@ -57,6 +61,7 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 	"Employee": "public/js/employee.js",
 	"User": "public/js/user.js",
+	"Lead": "public/js/lead.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -98,6 +103,9 @@ doctype_js = {
 
 # before_install = "contact_enhancements.install.before_install"
 after_install = "contact_enhancements.install.after_install"
+after_migrate = [
+	"contact_enhancements.setup.schema.ensure_contact_phone_uniqueness_constraint",
+]
 
 # Uninstallation
 # ------------
@@ -140,12 +148,9 @@ after_install = "contact_enhancements.install.after_install"
 # }
 
 # DocType Class
-# ---------------
-# Override standard doctype classes
-
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
+override_doctype_class = {
+	"Lead": "contact_enhancements.overrides.lead.CustomLead",
+}
 
 # Document Events
 # ---------------
@@ -190,7 +195,13 @@ doc_events = {
 		"on_update": "contact_enhancements.employee_hooks.link_employee_contact",
 	},
 	"Lead": {
-		"on_update": "contact_enhancements.lead_hooks.sync_lead_address_from_contact_links",
+		"validate": [
+			"contact_enhancements.lead_hooks.backfill_lead_from_primary_contact",
+		],
+		"on_update": [
+			"contact_enhancements.lead_hooks.link_lead_contact",
+			"contact_enhancements.lead_hooks.sync_lead_address_from_contact_links",
+		],
 	},
 	"Contact": {
 		"validate": [
