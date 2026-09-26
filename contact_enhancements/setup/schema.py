@@ -26,7 +26,7 @@ UNIQUENESS_COLUMN = "phone_uniqueness_key"
 UNIQUENESS_INDEX = "phone_uniqueness_key_index"
 
 
-def ensure_contact_phone_uniqueness_constraint():
+def ensure_contact_phone_uniqueness_constraint(throw_if_duplicates=True):
 	"""Ensure Contact Phone.phone_uniqueness_key generated column and its
 	unique index exist. Safe to run repeatedly (idempotent).
 
@@ -36,28 +36,23 @@ def ensure_contact_phone_uniqueness_constraint():
 	- add_contact_phone_unique_mobile_index patch (historical migrations)
 	"""
 	duplicates = find_duplicate_mobile_contacts()
-	if duplicates:
-		total_contacts = sum(len(entry["contacts"]) for entry in duplicates)
-		frappe.throw(
-			f"contact_enhancements: cannot add the mobile-number uniqueness constraint - "
-			f"{len(duplicates)} duplicate mobile number(s) still exist across {total_contacts} "
-			f"Contacts. Resolve every group first (merge, reclassify as landline, or fix a "
-			f"typo) - see contact_enhancements.patches.report_duplicate_mobile_contacts's own "
-			f"Error Log entries, or call find_duplicate_mobile_contacts() directly, for exactly "
-			f"which Contacts conflict. Re-run `bench migrate` once every group is resolved."
-		)
-
 	within_contact_duplicates = find_duplicate_phone_rows_within_contact()
-	if within_contact_duplicates:
-		frappe.throw(
+
+	if duplicates or within_contact_duplicates:
+		total_contacts = sum(len(entry["contacts"]) for entry in duplicates)
+		msg = (
 			f"contact_enhancements: cannot add the mobile-number uniqueness constraint - "
-			f"{len(within_contact_duplicates)} Contact(s) have the same mobile number entered "
-			f"twice on their own phone_nos table (a different problem from cross-Contact "
-			f"duplicates - see find_duplicate_phone_rows_within_contact's own docstring). Call "
-			f"contact_dedupe.dedupe_contact_phone_rows(contact, phone) for each one listed, or "
-			f"resolve directly on the Contact form. Re-run `bench migrate` once every one is "
-			f"resolved: {within_contact_duplicates}"
+			f"{len(duplicates)} duplicate mobile number(s) still exist across {total_contacts} Contacts, "
+			f"and {len(within_contact_duplicates)} Contact(s) have duplicated phone rows. "
+			f"Resolve every group first (merge, reclassify as landline, or fix a typo) via the "
+			f"Duplicate Mobile Contacts page or Error Log entries. Re-run `bench migrate` once resolved."
 		)
+		if throw_if_duplicates and not getattr(frappe.flags, "in_install", False):
+			frappe.throw(msg)
+		else:
+			print(f"\n[WARNING] {msg}\n")
+			frappe.log_error(title="contact_enhancements: unique mobile index deferred due to duplicates", message=msg)
+			return
 
 	if UNIQUENESS_COLUMN not in frappe.db.get_table_columns("Contact Phone"):
 		frappe.db.sql_ddl(

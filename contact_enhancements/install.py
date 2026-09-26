@@ -27,4 +27,4 @@ def after_install():
 	create_supplier_contact_property_setters()
 	create_employee_full_name_property_setters()
 	create_user_contact_property_setters()
-	ensure_contact_phone_uniqueness_constraint()
+	ensure_contact_phone_uniqueness_constraint(throw_if_duplicates=False)
