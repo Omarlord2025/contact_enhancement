@@ -12,6 +12,7 @@ const DOCTYPE_AR = {
 	Employee: "الموظف",
 	User: "المستخدم",
 	Contact: "جهة الاتصال",
+	Lead: "العميل المحتمل",
 };
 
 const LINK_DOCTYPE_AR = {
@@ -19,6 +20,7 @@ const LINK_DOCTYPE_AR = {
 	Supplier: "مورد",
 	Employee: "موظف",
 	User: "مستخدم",
+	Lead: "عميل محتمل",
 };
 
 /**
@@ -77,8 +79,8 @@ contact_enhancements._show_name_sync_dialog = function (
 	reject
 ) {
 	const esc = frappe.utils.escape_html;
-	const party_type = frm.doc[config.type_field] || "";
-	const is_individual = party_type === "Individual";
+	const party_type = config.type_field ? (frm.doc[config.type_field] || "") : "Individual";
+	const is_individual = config.doctype === "Contact" || config.doctype === "Employee" || party_type === "Individual";
 	const doctype_ar = DOCTYPE_AR[config.doctype] || config.doctype;
 
 	let is_settled = false;
@@ -137,6 +139,9 @@ contact_enhancements._show_name_sync_dialog = function (
 		secondary_action() {
 			is_settled = true;
 			frm.__ce_original_party_name = frm.doc[config.name_field];
+			if (config.doctype === "Contact") {
+				frm.doc.__ce_name_synced = 1;
+			}
 			dialog.hide();
 			resolve();
 		},
@@ -356,6 +361,10 @@ function _do_update(dialog, values, contacts, frm, config, on_success) {
 		callback(r) {
 			// تحديث حقل الاسم في النموذج الأصلي بالاسم الجديد إذا تم تعديله داخل النافذة
 			frm.set_value(config.name_field, new_name);
+
+			if (config.doctype === "Contact") {
+				frm.doc.__ce_name_synced = 1;
+			}
 
 			// استدعاء on_success أولاً لتعيين is_settled = true قبل إغلاق النافذة
 			on_success();

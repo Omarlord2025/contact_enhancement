@@ -77,6 +77,11 @@ function normalize_arabic_first_name(name) {
 }
 
 frappe.ui.form.on("Contact", {
+	onload(frm) {
+		if (!frm.is_new()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+		}
+	},
 	first_name(frm) {
 		const raw = frm.doc.first_name;
 		if (!raw) return;
@@ -102,6 +107,10 @@ frappe.ui.form.on("Contact", {
 		frm.doc.first_name = normalize_arabic_first_name(frm.doc.first_name);
 	},
 	refresh(frm) {
+		if (!frm.is_new() && !frm.is_dirty()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+		}
+
 		stage_pending_phone(frm);
 
 		// Only makes sense once this Contact actually exists - a fresh,
@@ -138,6 +147,24 @@ frappe.ui.form.on("Contact", {
 			empty_message: __("No addresses linked to this Contact yet - via any Customer, Supplier, Employee, Lead, or User."),
 		});
 		frm.__ce_linked_addresses = { handle, wrapper: field.$wrapper[0] };
+	},
+	before_save(frm) {
+		// Offer to propagate a Contact name change to linked doctypes before saving.
+		const config = {
+			doctype: "Contact",
+			name_field: "first_name",
+			type_field: null,
+			primary_contact_field: null,
+		};
+		if (window.contact_enhancements && contact_enhancements.maybe_show_name_sync_dialog) {
+			return contact_enhancements.maybe_show_name_sync_dialog(frm, config);
+		} else {
+			return new Promise((resolve) => {
+				frappe.require("/assets/contact_enhancements/js/name_sync_dialog.js", () => {
+					contact_enhancements.maybe_show_name_sync_dialog(frm, config).then(resolve).catch(resolve);
+				});
+			});
+		}
 	},
 });
 

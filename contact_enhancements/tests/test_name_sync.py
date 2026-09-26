@@ -9,14 +9,15 @@ from contact_enhancements.api.name_sync import (
 	update_contact_names,
 )
 from contact_enhancements.tests.test_customer_hooks import make_customer
-from contact_enhancements.tests.test_lead_lookup import make_contact
+from contact_enhancements.tests.test_employee_hooks import make_employee
+from contact_enhancements.tests.test_lead_lookup import make_contact, make_lead
 from contact_enhancements.tests.test_supplier_hooks import make_supplier
 
 
 class TestNameSyncApi(FrappeTestCase):
 	def test_get_linked_contacts_unsupported_doctype(self):
-		self.assertEqual(get_linked_contacts_for_name_sync("Lead", "NONEXISTENT"), [])
 		self.assertEqual(get_linked_contacts_for_name_sync("Item", "NONEXISTENT"), [])
+		self.assertEqual(get_linked_contacts_for_name_sync("Quotation", "NONEXISTENT"), [])
 
 	def test_get_linked_contacts_empty_when_no_contacts(self):
 		customer = make_customer()
@@ -70,6 +71,55 @@ class TestNameSyncApi(FrappeTestCase):
 		co_link = next(l for l in links if l["name"] == supplier_co.name)
 		self.assertFalse(co_link["is_individual"])
 
+	def test_get_linked_contacts_for_employee(self):
+		contact = make_contact(first_name="Employee Person")
+		employee = make_employee(employee_primary_contact=contact.name)
+
+		contact = frappe.get_doc("Contact", contact.name)
+		if not any(l.link_doctype == "Employee" and l.link_name == employee.name for l in contact.links):
+			contact.append("links", {"link_doctype": "Employee", "link_name": employee.name})
+			contact.save(ignore_permissions=True)
+
+		results = get_linked_contacts_for_name_sync("Employee", employee.name)
+		self.assertEqual(len(results), 1)
+		self.assertEqual(results[0]["contact"], contact.name)
+		self.assertTrue(results[0]["is_primary"])
+
+	def test_get_linked_contacts_for_lead(self):
+		contact = make_contact(first_name="Lead Person")
+		lead = make_lead(lead_primary_contact=contact.name)
+
+		contact = frappe.get_doc("Contact", contact.name)
+		if not any(l.link_doctype == "Lead" and l.link_name == lead.name for l in contact.links):
+			contact.append("links", {"link_doctype": "Lead", "link_name": lead.name})
+			contact.save(ignore_permissions=True)
+
+		results = get_linked_contacts_for_name_sync("Lead", lead.name)
+		self.assertEqual(len(results), 1)
+		self.assertEqual(results[0]["contact"], contact.name)
+		self.assertTrue(results[0]["is_primary"])
+
+	def test_get_linked_contacts_for_contact(self):
+		contact = make_contact(first_name="Direct Contact Person")
+		customer = make_customer(customer_primary_contact=contact.name)
+		employee = make_employee(employee_primary_contact=contact.name)
+
+		contact = frappe.get_doc("Contact", contact.name)
+		if not any(l.link_doctype == "Customer" and l.link_name == customer.name for l in contact.links):
+			contact.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		if not any(l.link_doctype == "Employee" and l.link_name == employee.name for l in contact.links):
+			contact.append("links", {"link_doctype": "Employee", "link_name": employee.name})
+		contact.save(ignore_permissions=True)
+
+		results = get_linked_contacts_for_name_sync("Contact", contact.name)
+		self.assertEqual(len(results), 1)
+		self.assertEqual(results[0]["contact"], contact.name)
+		links = results[0]["links"]
+		self.assertEqual(len(links), 2)
+		link_doctypes = {l["doctype"] for l in links}
+		self.assertIn("Customer", link_doctypes)
+		self.assertIn("Employee", link_doctypes)
+
 	def test_update_contact_names_validation(self):
 		with self.assertRaises(frappe.ValidationError):
 			update_contact_names([], "")
@@ -96,14 +146,18 @@ class TestNameSyncApi(FrappeTestCase):
 	def test_update_contact_and_linked_records(self):
 		contact = make_contact(first_name="Base Contact")
 		supplier = make_supplier(supplier_name="Old Supplier", supplier_type="Individual")
+		lead = make_lead(first_name="Old Lead First")
 
 		results = update_contact_names(
 			contacts=[contact.name],
 			new_name="New Unified Name",
-			linked_records=[{"doctype": "Supplier", "name": supplier.name}],
+			linked_records=[
+				{"doctype": "Supplier", "name": supplier.name},
+				{"doctype": "Lead", "name": lead.name},
+			],
 		)
 
-		self.assertEqual(len(results), 2)
+		self.assertEqual(len(results), 3)
 		self.assertTrue(all(r["status"] == "updated" for r in results))
 
 		# Verify Contact was updated
@@ -113,3 +167,8 @@ class TestNameSyncApi(FrappeTestCase):
 		# Verify Supplier was updated
 		s_name = frappe.db.get_value("Supplier", supplier.name, "supplier_name")
 		self.assertEqual(s_name, "New Unified Name")
+
+		# Verify Lead was updated
+		l_first = frappe.db.get_value("Lead", lead.name, "first_name")
+		self.assertEqual(l_first, "New Unified Name")
+

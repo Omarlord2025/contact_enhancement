@@ -33,10 +33,8 @@ from frappe import _
 
 from contact_enhancements.contact_hooks import normalize_arabic_first_name
 
-# Doctypes surfaced in the dialog's "Also linked to:" list.  Lead is excluded
-# deliberately: a Lead link is an origin record, not an ongoing relationship
-# that would be semantically affected by a name change initiated here.
-_LINK_DOCTYPES_FOR_DISPLAY = frozenset({"Customer", "Supplier", "Employee", "User"})
+# Doctypes surfaced in the dialog's "Also linked to:" list.
+_LINK_DOCTYPES_FOR_DISPLAY = frozenset({"Customer", "Supplier", "Employee", "User", "Lead"})
 
 # Which type value marks a party as an individual person (the only case where
 # the existing propagate_contact_changes_to_linked_doctypes will auto-sync the
@@ -53,6 +51,7 @@ _TITLE_FIELD = {
     "Supplier": "supplier_name",
     "Employee": "employee_name",
     "User": "full_name",
+    "Lead": "lead_name",
 }
 
 # Primary-contact field per doctype — used to mark which Contact is "primary"
@@ -62,12 +61,13 @@ _PRIMARY_CONTACT_FIELD = {
     "Supplier": "supplier_primary_contact",
     "Employee": "employee_primary_contact",
     "User": "user_primary_contact",
+    "Lead": "lead_primary_contact",
 }
 
 
 @frappe.whitelist()
 def get_linked_contacts_for_name_sync(doctype, docname):
-    """Return every Contact Dynamic-Linked to this Customer/Supplier.
+    """Return every Contact linked to this party (or parties linked to this Contact).
 
     For each Contact the response includes:
       - contact        – Contact document name
@@ -80,34 +80,41 @@ def get_linked_contacts_for_name_sync(doctype, docname):
 
     Returns an empty list for unsupported doctypes or when no Contacts exist.
     """
-    if doctype not in ("Customer", "Supplier"):
+    if doctype not in ("Customer", "Supplier", "Employee", "Lead", "Contact"):
         return []
 
-    # Read-access check on the party itself before we query anything.
+    # Read-access check on the record itself before we query anything.
     frappe.has_permission(doctype, "read", doc=docname, throw=True)
 
-    primary_contact_field = _PRIMARY_CONTACT_FIELD.get(doctype)
-    primary_contact = (
-        frappe.db.get_value(doctype, docname, primary_contact_field)
-        if primary_contact_field
-        else None
-    )
+    if doctype == "Contact":
+        contact_names = [docname]
+        primary_contact = docname
+    else:
+        primary_contact_field = _PRIMARY_CONTACT_FIELD.get(doctype)
+        primary_contact = (
+            frappe.db.get_value(doctype, docname, primary_contact_field)
+            if primary_contact_field
+            else None
+        )
 
-    # All Contacts linked to this party via Dynamic Link.
-    rows = frappe.get_all(
-        "Dynamic Link",
-        filters={
-            "parenttype": "Contact",
-            "link_doctype": doctype,
-            "link_name": docname,
-        },
-        fields=["parent"],
-        distinct=True,
-    )
-    if not rows:
-        return []
+        # All Contacts linked to this party via Dynamic Link.
+        rows = frappe.get_all(
+            "Dynamic Link",
+            filters={
+                "parenttype": "Contact",
+                "link_doctype": doctype,
+                "link_name": docname,
+            },
+            fields=["parent"],
+            distinct=True,
+        )
+        contact_names = list({row.parent for row in rows})
+        if primary_contact and primary_contact not in contact_names:
+            if frappe.db.exists("Contact", primary_contact):
+                contact_names.append(primary_contact)
 
-    contact_names = list({row.parent for row in rows})
+        if not contact_names:
+            return []
 
     # Batch: current full_name for each Contact.
     contact_records = frappe.get_all(
@@ -313,6 +320,10 @@ def update_contact_names(contacts=None, new_name=None, linked_records=None):
                 field_updates["employee_name"] = normalized
         elif dt == "User":
             field_updates["first_name"] = normalized
+        elif dt == "Lead":
+            field_updates["first_name"] = normalized
+            if frappe.db.has_column("Lead", "lead_name"):
+                field_updates["lead_name"] = normalized
 
         if not field_updates:
             continue

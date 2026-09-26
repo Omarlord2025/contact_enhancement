@@ -11,6 +11,7 @@ from contact_enhancements.api.contact_lookup import (
 	name_prefix_key,
 	search_contacts_by_name_prefix,
 	create_minimal_contact,
+	add_phone_to_contact_if_missing,
 	escape_like_wildcards,
 	get_address_from_contact_links,
 	get_addresses_for_contact,
@@ -209,6 +210,34 @@ class TestCreateMinimalContact(FrappeTestCase):
 	def test_accepts_a_three_word_name(self):
 		name = create_minimal_contact(first_name="Nadia Ahmed Sabry", phone="01033344477", country="Egypt")
 		self.assertTrue(frappe.db.exists("Contact", name))
+
+	def test_creates_contact_with_company_name(self):
+		name = create_minimal_contact(
+			first_name="Nadia Ahmed Sabry",
+			phone="01033344488",
+			country="Egypt",
+			company_name="Acme Corp",
+		)
+		contact = frappe.get_doc("Contact", name)
+		self.assertEqual(contact.company_name, "Acme Corp")
+
+	def test_add_phone_to_contact_if_missing(self):
+		contact = make_contact(first_name="Hassan Ali", phone_nos=["01011112222"])
+		self.assertEqual(len(contact.phone_nos), 1)
+
+		# 1. Existing phone - should return already_exists and not duplicate
+		res1 = add_phone_to_contact_if_missing(contact.name, "01011112222")
+		self.assertEqual(res1.get("status"), "already_exists")
+		contact.reload()
+		self.assertEqual(len(contact.phone_nos), 1)
+
+		# 2. New phone - should append to contact
+		res2 = add_phone_to_contact_if_missing(contact.name, "01099998888", country="Egypt")
+		self.assertEqual(res2.get("status"), "added")
+		contact.reload()
+		self.assertEqual(len(contact.phone_nos), 2)
+		phones = [r.phone for r in contact.phone_nos]
+		self.assertIn("+201099998888", phones)
 
 
 class TestSearchContactsWithDetails(FrappeTestCase):

@@ -1064,6 +1064,8 @@ def propagate_contact_changes_to_linked_doctypes(doc, method=None):
 		method: unused, present for the doc_events hook signature.
 	"""
 	changed_name = doc.full_name if doc.has_value_changed("full_name") else None
+	if doc.get("__ce_name_synced") or (doc.flags and doc.flags.get("ignore_name_propagation")):
+		changed_name = None
 	changed_email = doc.email_id if doc.has_value_changed("email_id") else None
 	changed_phone = doc.mobile_no if doc.has_value_changed("mobile_no") else None
 	if not (changed_name or changed_email or changed_phone):

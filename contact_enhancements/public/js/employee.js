@@ -16,11 +16,18 @@
 
 frappe.ui.form.on("Employee", {
 	onload(frm) {
-		if (!frm.is_new()) return;
+		if (!frm.is_new()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+			return;
+		}
 		show_reactive_contact_dialog(frm);
 	},
 
 	refresh(frm) {
+		if (!frm.is_new() && !frm.is_dirty()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+		}
+
 		frm.set_query("employee_primary_contact", () => ({
 			query: "contact_enhancements.api.contact_lookup.search_contact_by_phone",
 		}));
@@ -47,6 +54,25 @@ frappe.ui.form.on("Employee", {
 		});
 
 		apply_address_fallback(frm);
+	},
+
+	before_save(frm) {
+		// Offer to propagate an Employee name change to linked Contacts & linked records before saving.
+		const config = {
+			doctype: "Employee",
+			name_field: "first_name",
+			type_field: null,
+			primary_contact_field: "employee_primary_contact",
+		};
+		if (window.contact_enhancements && contact_enhancements.maybe_show_name_sync_dialog) {
+			return contact_enhancements.maybe_show_name_sync_dialog(frm, config);
+		} else {
+			return new Promise((resolve) => {
+				frappe.require("/assets/contact_enhancements/js/name_sync_dialog.js", () => {
+					contact_enhancements.maybe_show_name_sync_dialog(frm, config).then(resolve).catch(resolve);
+				});
+			});
+		}
 	},
 });
 

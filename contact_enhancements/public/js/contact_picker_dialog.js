@@ -139,9 +139,9 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 			{
 				fieldtype: "Data",
 				fieldname: "phone",
-				label: __("Phone Number"),
-				description: __("ادخل رقم الهاتف بكود الدولة او بدونه"),
-				placeholder: __("يمكن استخدام هذا الحقل للبحث عن رقم مسجل بالفعل"),
+				label: __("Phone Number or Name"),
+				description: __("ادخل رقم الهاتف أو الاسم للبحث عن جهة اتصال مسجلة"),
+				placeholder: __("يمكنك البحث بالاسم أو رقم الهاتف أو البريد الإلكتروني"),
 			},
 			{ fieldtype: "HTML", fieldname: "results" },
 			{ fieldtype: "Section Break", label: __("Create a New Contact") },
@@ -185,6 +185,7 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 					first_name: values.new_first_name,
 					phone: values.phone,
 					country: values.country,
+					company_name: values.company_name || values.new_company_name || null,
 				},
 				freeze: true,
 				callback(r) {
@@ -388,7 +389,10 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 							<b>${full_name}</b>
 							<div class="text-muted">${detail ? `<div>${detail}</div>` : ""}${phones}${no_phone}</div>
 						</div>
-						<button class="btn btn-xs btn-default open-existing-contact-btn" data-name="${esc(match.name)}">${__("Open & Add Number")}</button>
+						<div style="display: flex; gap: 6px; align-items: center;">
+							<button class="btn btn-xs btn-primary select-name-match-btn" data-name="${esc(match.name)}">${__("Select")}</button>
+							<button class="btn btn-xs btn-default open-existing-contact-btn" data-name="${esc(match.name)}">${__("Open & Add Number")}</button>
+						</div>
 					</div>`;
 			})
 			.join("");
@@ -402,9 +406,32 @@ contact_enhancements.show_contact_picker_dialog = function (frm, config) {
 			</div>`);
 	}
 
-	// Its own delegated handler on its own wrapper: the phone results
-	// handler above is bound to the `results` wrapper specifically, so it
-	// would never see clicks in here even with the same class.
+	// Its own delegated handlers on its own wrapper:
+	$name_matches.on("click", ".select-name-match-btn", function () {
+		const contact_name = $(this).attr("data-name");
+		const values = get_values_ignoring_missing();
+		if (!extra_fields_are_valid(values)) return;
+
+		if (values.phone) {
+			frappe.call({
+				method: "contact_enhancements.api.contact_lookup.add_phone_to_contact_if_missing",
+				args: {
+					contact: contact_name,
+					phone: values.phone,
+					country: values.country,
+				},
+				callback() {
+					finish(contact_name);
+				},
+				error() {
+					finish(contact_name);
+				},
+			});
+		} else {
+			finish(contact_name);
+		}
+	});
+
 	$name_matches.on("click", ".open-existing-contact-btn", function () {
 		const contact_name = $(this).attr("data-name");
 		const values = get_values_ignoring_missing() || {};

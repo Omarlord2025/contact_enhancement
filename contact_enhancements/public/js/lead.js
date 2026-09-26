@@ -5,11 +5,18 @@ frappe.provide("contact_enhancements");
 
 frappe.ui.form.on("Lead", {
 	onload(frm) {
-		if (!frm.is_new()) return;
+		if (!frm.is_new()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+			return;
+		}
 		show_lead_contact_dialog(frm);
 	},
 
 	refresh(frm) {
+		if (!frm.is_new() && !frm.is_dirty()) {
+			frm.__ce_original_party_name = frm.doc.first_name;
+		}
+
 		frm.set_query("lead_primary_contact", () => ({
 			query: "contact_enhancements.api.contact_lookup.search_contact_by_phone",
 		}));
@@ -33,6 +40,25 @@ frappe.ui.form.on("Lead", {
 				}
 			},
 		});
+	},
+
+	before_save(frm) {
+		// Offer to propagate a Lead name change to linked Contacts & linked records before saving.
+		const config = {
+			doctype: "Lead",
+			name_field: "first_name",
+			type_field: null,
+			primary_contact_field: "lead_primary_contact",
+		};
+		if (window.contact_enhancements && contact_enhancements.maybe_show_name_sync_dialog) {
+			return contact_enhancements.maybe_show_name_sync_dialog(frm, config);
+		} else {
+			return new Promise((resolve) => {
+				frappe.require("/assets/contact_enhancements/js/name_sync_dialog.js", () => {
+					contact_enhancements.maybe_show_name_sync_dialog(frm, config).then(resolve).catch(resolve);
+				});
+			});
+		}
 	},
 });
 
@@ -73,7 +99,19 @@ function show_lead_contact_dialog(frm) {
 		primary_contact_fieldname: "lead_primary_contact",
 		title: __("قائمة التعبئة السريعة"),
 		no_cancel: false,
-		extra_dialog_fields: [],
+		extra_dialog_fields: [
+			{
+				fieldtype: "Data",
+				fieldname: "company_name",
+				label: __("Organization Name"),
+				placeholder: __("ادخل اسم المؤسسة / الشركة"),
+			},
+		],
+		on_before_finish(values, contact_name) {
+			if (values.company_name && !frm.doc.company_name) {
+				frm.set_value("company_name", values.company_name);
+			}
+		},
 	});
 }
 

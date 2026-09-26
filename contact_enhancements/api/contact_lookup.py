@@ -35,8 +35,8 @@ from contact_enhancements.utils import (
 
 
 @frappe.whitelist()
-def create_minimal_contact(first_name, phone, country=None):
-	"""Create a new Contact with just a name and a phone number.
+def create_minimal_contact(first_name, phone, country=None, company_name=None):
+	"""Create a new Contact with just a name and a phone number (and optional company/organization).
 
 	Backs the "Create New Contact" action in the shared contact-picker
 	dialog (contact_enhancements/public/js/contact_picker_dialog.js) -
@@ -68,18 +68,50 @@ def create_minimal_contact(first_name, phone, country=None):
 			mandatory country field (Contact Phone.country -
 			setup/custom_fields.py) - left unset (falls back to that
 			field's "Egypt" DocField default) only if not provided.
+		company_name: optional company/organization name to set on the Contact.
 
 	Returns:
 		The new Contact's name.
 	"""
 	contact = frappe.new_doc("Contact")
 	contact.first_name = first_name
+	if company_name:
+		contact.company_name = company_name
 	row = {"phone": phone, "is_primary_mobile_no": 1}
 	if country:
 		row["country"] = country
 	contact.append("phone_nos", row)
 	contact.insert()
 	return contact.name
+
+
+@frappe.whitelist()
+def add_phone_to_contact_if_missing(contact, phone, country=None):
+	"""Append a phone number to an existing Contact if it isn't already present.
+
+	Used when a user selects an existing Contact from the name-match results
+	in the contact-picker dialog after having typed a new phone number.
+	"""
+	if not contact or not phone or not phone.strip():
+		return {"status": "ignored"}
+
+	frappe.has_permission("Contact", "write", doc=contact, throw=True)
+	contact_doc = frappe.get_doc("Contact", contact)
+
+	clean_new = "".join(filter(str.isdigit, phone))
+	for row in contact_doc.phone_nos:
+		clean_existing = "".join(filter(str.isdigit, row.phone or ""))
+		if clean_new and clean_existing:
+			if clean_new == clean_existing or clean_new.endswith(clean_existing) or clean_existing.endswith(clean_new):
+				return {"status": "already_exists"}
+
+	has_primary_mobile = any(getattr(r, "is_primary_mobile_no", 0) for r in contact_doc.phone_nos)
+	new_row = {"phone": phone.strip(), "is_primary_mobile_no": 0 if has_primary_mobile else 1}
+	if country:
+		new_row["country"] = country
+	contact_doc.append("phone_nos", new_row)
+	contact_doc.save()
+	return {"status": "added"}
 
 
 def escape_like_wildcards(txt):
