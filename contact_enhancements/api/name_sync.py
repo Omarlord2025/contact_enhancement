@@ -102,6 +102,67 @@ def _get_primary_address_for_record(doctype, docname):
     return None
 
 
+def _get_all_linked_addresses(doctype, docname):
+    """Return every Address document linked to a record, as a list of dicts
+    with name, address_title, address_line1, and city — enough for the
+    name-sync dialog to show them as selectable items the user can rename.
+
+    Collects via two routes so no address is missed:
+    1. The doctype's own primary-address field (e.g. customer_primary_address)
+       so the "main" address always appears first.
+    2. All Dynamic Links where this record is mentioned on an Address parent
+       (a record can be linked to multiple addresses).
+
+    Deduplicates by address name so the primary never appears twice.
+
+    Args:
+        doctype: the doctype of the record (e.g. "Customer").
+        docname: the document name.
+
+    Returns:
+        List of dicts: [{"name", "address_title", "address_line1", "city"}, ...]
+    """
+    if not doctype or not docname:
+        return []
+
+    seen = set()
+    result = []
+
+    def _add(addr_name):
+        if not addr_name or addr_name in seen:
+            return
+        row = frappe.db.get_value(
+            "Address",
+            addr_name,
+            ["name", "address_title", "address_type", "address_line1", "city"],
+            as_dict=True,
+        )
+        if row:
+            seen.add(addr_name)
+            result.append(row)
+
+    # Route 1: primary-address field
+    primary_field = _PRIMARY_ADDRESS_FIELD.get(doctype)
+    if primary_field and frappe.db.has_column(doctype, primary_field):
+        _add(frappe.db.get_value(doctype, docname, primary_field))
+
+    # Route 2: all Dynamic Links on Address parents pointing to this record
+    dyn_links = frappe.get_all(
+        "Dynamic Link",
+        filters={
+            "parenttype": "Address",
+            "link_doctype": doctype,
+            "link_name": docname,
+        },
+        fields=["parent"],
+        order_by="creation asc",
+    )
+    for lnk in dyn_links:
+        _add(lnk.parent)
+
+    return result
+
+
 @frappe.whitelist()
 def get_linked_contacts_for_name_sync(doctype, docname):
     """Return every Contact linked to this party (or parties linked to this Contact).
@@ -151,7 +212,29 @@ def get_linked_contacts_for_name_sync(doctype, docname):
                 contact_names.append(primary_contact)
 
         if not contact_names:
-            return []
+            source_linked_addresses = _get_all_linked_addresses(doctype, docname)
+            if not source_linked_addresses:
+                return []
+            source_address = _get_primary_address_for_record(doctype, docname)
+            source_address_title = None
+            if source_address:
+                source_address_title = (
+                    frappe.db.get_value("Address", source_address, "address_title")
+                    or frappe.db.get_value("Address", source_address, "address_line1")
+                    or source_address
+                )
+            return [
+                {
+                    "contact": None,
+                    "full_name": None,
+                    "is_primary": False,
+                    "can_edit": False,
+                    "links": [],
+                    "source_address": source_address,
+                    "source_address_title": source_address_title,
+                    "linked_addresses": source_linked_addresses,
+                }
+            ]
 
     # Batch: current full_name for each Contact.
     contact_records = frappe.get_all(
@@ -253,6 +336,18 @@ def get_linked_contacts_for_name_sync(doctype, docname):
             or source_address
         )
 
+    # Gather all addresses linked to the source record so the dialog can
+    # offer the user the option to rename their address_title as well.
+    source_linked_addresses = _get_all_linked_addresses(doctype, docname)
+
+    # When called from Contact, also collect addresses from linked records.
+    if not source_linked_addresses and all_links:
+        for lnk in all_links:
+            addrs = _get_all_linked_addresses(lnk.link_doctype, lnk.link_name)
+            for a in addrs:
+                if not any(x["name"] == a["name"] for x in source_linked_addresses):
+                    source_linked_addresses.append(a)
+
     result = []
     for contact_name in contact_names:
         can_edit = frappe.has_permission("Contact", "write", doc=contact_name, throw=False)
@@ -265,6 +360,7 @@ def get_linked_contacts_for_name_sync(doctype, docname):
                 "links": links_by_contact.get(contact_name, []),
                 "source_address": source_address,
                 "source_address_title": source_address_title,
+                "linked_addresses": source_linked_addresses,
             }
         )
 
@@ -278,13 +374,14 @@ def update_contact_names(
     contacts=None,
     new_name=None,
     linked_records=None,
+    linked_addresses=None,
     sync_address=True,
     source_address=None,
     source_doctype=None,
     source_name=None,
 ):
-    """Write new_name to first_name/full_name on Contacts, and name field on linked records.
-    Optionally syncs primary address to contacts and linked records whose primary address is blank.
+    """Write new_name to first_name/full_name on Contacts, name field on linked
+    records, and optionally address_title on selected linked addresses.
 
     Uses frappe.db.set_value() — see this module's own docstring for why
     doc.save() is deliberately avoided.
@@ -297,6 +394,8 @@ def update_contact_names(
         contacts: list (or JSON string) of Contact document names.
         new_name:  the new full_name / first_name string.
         linked_records: list (or JSON string) of dicts {doctype, name}.
+        linked_addresses: list (or JSON string) of Address document names whose
+            address_title should be updated to the new normalized name.
         sync_address: bool (default True) to copy primary address to blank targets.
         source_address: Address document name to sync.
         source_doctype: Originating doctype (e.g. "Customer").
@@ -325,10 +424,16 @@ def update_contact_names(
 
         linked_records = _json.loads(linked_records)
 
+    if isinstance(linked_addresses, str):
+        import json as _json
+
+        linked_addresses = _json.loads(linked_addresses)
+
     contacts = contacts or []
     linked_records = linked_records or []
+    linked_addresses = linked_addresses or []
 
-    if not contacts and not linked_records:
+    if not contacts and not linked_records and not linked_addresses:
         return []
 
     results = []
@@ -418,7 +523,28 @@ def update_contact_names(
             )
             results.append({"doctype": dt, "name": dn, "status": "failed"})
 
-    # 3. Propagate Address if enabled
+    # 3. Update address_title on selected addresses
+    for addr_name in linked_addresses:
+        if not frappe.db.exists("Address", addr_name):
+            results.append({"doctype": "Address", "name": addr_name, "status": "failed"})
+            continue
+
+        if not frappe.has_permission("Address", "write", doc=addr_name, throw=False):
+            results.append({"doctype": "Address", "name": addr_name, "status": "no_permission"})
+            continue
+
+        try:
+            frappe.db.set_value("Address", addr_name, "address_title", normalized, update_modified=True)
+            frappe.clear_document_cache("Address", addr_name)
+            results.append({"doctype": "Address", "name": addr_name, "status": "updated"})
+        except Exception:
+            frappe.log_error(
+                title="contact_enhancements: name_sync update Address title failed",
+                message=f"Tried to update Address {addr_name!r} address_title → {normalized!r}",
+            )
+            results.append({"doctype": "Address", "name": addr_name, "status": "failed"})
+
+    # 4. Propagate Address link if enabled
     do_sync_address = cint(sync_address) if sync_address is not None else 1
     if do_sync_address:
         # Discover source address if not passed

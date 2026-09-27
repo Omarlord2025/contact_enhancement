@@ -13,6 +13,7 @@ const DOCTYPE_AR = {
 	User: "المستخدم",
 	Contact: "جهة الاتصال",
 	Lead: "العميل المحتمل",
+	Address: "العنوان",
 };
 
 const LINK_DOCTYPE_AR = {
@@ -21,6 +22,21 @@ const LINK_DOCTYPE_AR = {
 	Employee: "موظف",
 	User: "مستخدم",
 	Lead: "عميل محتمل",
+};
+
+const ADDRESS_TYPE_AR = {
+	Billing: "فاتورة",
+	Shipping: "شحن",
+	Office: "مكتب",
+	Personal: "شخصي",
+	Plant: "مصنع",
+	Postal: "بريدي",
+	Shop: "متجر",
+	Subsidiary: "فرعي",
+	Warehouse: "مستودع",
+	Current: "حالي",
+	Permanent: "دائم",
+	Other: "أخرى",
 };
 
 /**
@@ -87,6 +103,7 @@ contact_enhancements._show_name_sync_dialog = function (
 
 	const source_address = (contacts[0] && contacts[0].source_address) || "";
 	const source_address_title = (contacts[0] && contacts[0].source_address_title) || source_address;
+	const linked_addresses = (contacts[0] && contacts[0].linked_addresses) || [];
 
 	const fields = [
 		{
@@ -146,6 +163,12 @@ contact_enhancements._show_name_sync_dialog = function (
 		fieldname: "contacts_list",
 	});
 
+	// حقل منفصل لقسم العناوين المرتبطة (يُملأ بعد عرض النافذة)
+	fields.push({
+		fieldtype: "HTML",
+		fieldname: "addresses_list",
+	});
+
 	const dialog = new frappe.ui.Dialog({
 		title: __("تحديث جهات الاتصال والسجلات المرتبطة؟"),
 		fields: fields,
@@ -185,6 +208,7 @@ contact_enhancements._show_name_sync_dialog = function (
 	};
 
 	_render_contacts(dialog, contacts, is_individual);
+	_render_addresses(dialog, linked_addresses, old_name, new_name);
 	dialog.show();
 };
 
@@ -194,8 +218,14 @@ contact_enhancements._show_name_sync_dialog = function (
 
 function _render_contacts(dialog, contacts, is_individual) {
 	const $wrapper = dialog.fields_dict.contacts_list.$wrapper;
+	const real_contacts = (contacts || []).filter((c) => c && c.contact);
 
-	const rows = contacts.map((c) => _render_contact_row(c, is_individual)).join("");
+	if (!real_contacts.length) {
+		$wrapper.empty();
+		return;
+	}
+
+	const rows = real_contacts.map((c) => _render_contact_row(c, is_individual)).join("");
 
 	$wrapper.html(`
 		<div style="margin-top:4px;direction:rtl;text-align:right;">
@@ -326,6 +356,76 @@ function _render_links(links, parent_contact, parent_unchecked) {
 }
 
 // ---------------------------------------------------------------------------
+// عرض العناوين المرتبطة
+// ---------------------------------------------------------------------------
+
+function _render_addresses(dialog, linked_addresses, old_name, new_name) {
+	const $wrapper = dialog.fields_dict.addresses_list.$wrapper;
+
+	if (!linked_addresses || !linked_addresses.length) {
+		$wrapper.empty();
+		return;
+	}
+
+	const esc = frappe.utils.escape_html;
+	const rows = linked_addresses
+		.map((addr) => {
+			const title = addr.address_title || addr.name;
+			const details = [addr.address_line1, addr.city].filter(Boolean).join(" - ");
+			const type_label = ADDRESS_TYPE_AR[addr.address_type] || addr.address_type || "";
+			const type_badge = type_label
+				? `<span style="display:inline-block;margin-right:6px;padding:1px 6px;
+				              font-size:10px;font-weight:600;border-radius:8px;
+				              background:var(--gray-100);color:var(--gray-700);"
+				         >${esc(type_label)}</span>`
+				: "";
+
+			return `
+				<div class="name-sync-address-row"
+				     style="padding:10px 14px;border-bottom:1px solid var(--border-color);display:flex;align-items:center;">
+					<input type="checkbox"
+					       class="name-sync-address-checkbox"
+					       data-address="${esc(addr.name)}"
+					       checked
+					       style="width:14px;height:14px;cursor:pointer;margin-left:10px;">
+					<div style="flex:1;">
+						<div style="font-weight:600;font-size:var(--text-sm);">
+							<span class="text-muted" style="font-size:var(--text-xs);margin-left:4px;">${esc(__("العنوان"))}:</span>
+							<a href="/app/address/${encodeURIComponent(addr.name)}"
+							   target="_blank" rel="noopener"
+							   style="text-decoration:none;font-weight:600;">${esc(title)}</a>
+							${type_badge}
+							<span style="color:var(--text-muted);margin:0 6px;">&#8594;</span>
+							<span class="name-sync-address-new-name" style="font-weight:600;color:var(--primary-color);">${esc(new_name)}</span>
+						</div>
+						${details ? `<div style="font-size:var(--text-xs);color:var(--text-muted);margin-top:2px;">${esc(details)}</div>` : ""}
+					</div>
+				</div>`;
+		})
+		.join("");
+
+	$wrapper.html(`
+		<div style="margin-top:12px;direction:rtl;text-align:right;">
+			<label style="font-size:var(--text-sm);color:var(--text-muted);
+			              font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">
+				${esc(__("العناوين المرتبطة بهذا السجل (تحديث عنوان العنوان / Address Title)"))}
+			</label>
+			<div class="name-sync-addresses"
+			     style="margin-top:6px;border:1px solid var(--border-color);
+			            border-radius:var(--border-radius);overflow:hidden;">
+				${rows}
+			</div>
+		</div>
+	`);
+
+	// تحديث الاسم الجديد المعروض بجانب العناوين في حال عدّل المستخدم حقل new_name
+	dialog.fields_dict.new_name.$input.on("input", function () {
+		const val = ($(this).val() || "").trim();
+		$wrapper.find(".name-sync-address-new-name").text(val);
+	});
+}
+
+// ---------------------------------------------------------------------------
 // إجراء التحديث
 // ---------------------------------------------------------------------------
 
@@ -355,9 +455,16 @@ function _do_update(dialog, values, contacts, frm, config, on_success) {
 			});
 		});
 
-	if (!selected_contacts.length && !selected_links.length) {
+	const selected_addresses = [];
+	dialog.fields_dict.addresses_list.$wrapper
+		.find(".name-sync-address-checkbox:checked")
+		.each(function () {
+			selected_addresses.push($(this).data("address"));
+		});
+
+	if (!selected_contacts.length && !selected_links.length && !selected_addresses.length) {
 		frappe.msgprint(
-			__("يرجى تحديد جهة اتصال أو سجل مرتبط واحد على الأقل، أو النقر على «حفظ {0} فقط».", [doctype_ar])
+			__("يرجى تحديد جهة اتصال أو سجل مرتبط أو عنوان واحد على الأقل، أو النقر على «حفظ {0} فقط».", [doctype_ar])
 		);
 		return;
 	}
@@ -370,6 +477,7 @@ function _do_update(dialog, values, contacts, frm, config, on_success) {
 			contacts: selected_contacts,
 			new_name: new_name,
 			linked_records: selected_links,
+			linked_addresses: selected_addresses,
 			sync_address: values.sync_address !== undefined ? values.sync_address : 1,
 			source_address: (contacts[0] && contacts[0].source_address) || "",
 			source_doctype: config.doctype,

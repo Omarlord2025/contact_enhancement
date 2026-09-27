@@ -319,3 +319,73 @@ class TestNameSyncApi(FrappeTestCase):
 		self.assertEqual(results[0]["source_address"], addr.name)
 		self.assertEqual(results[0]["source_address_title"], "Customer Office Only")
 
+	def test_get_linked_contacts_surfaces_linked_addresses(self):
+		contact = make_contact(first_name="Addr Test Contact")
+		customer = make_customer(customer_name="Addr Test Customer", customer_primary_contact=contact.name)
+		contact.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		contact.save(ignore_permissions=True)
+
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Old Address Title"
+		addr.address_type = "Office"
+		addr.address_line1 = "42 Street"
+		addr.city = "Cairo"
+		addr.country = "Egypt"
+		addr.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		addr.insert(ignore_permissions=True)
+		frappe.db.set_value("Customer", customer.name, "customer_primary_address", addr.name)
+
+		results = get_linked_contacts_for_name_sync("Customer", customer.name)
+		self.assertTrue(results)
+		self.assertIn("linked_addresses", results[0])
+		addrs = results[0]["linked_addresses"]
+		self.assertTrue(any(a["name"] == addr.name for a in addrs))
+		matched = next(a for a in addrs if a["name"] == addr.name)
+		self.assertEqual(matched["address_title"], "Old Address Title")
+		self.assertEqual(matched["address_type"], "Office")
+
+	def test_get_linked_contacts_when_no_contacts_but_has_address(self):
+		customer = make_customer(customer_name="No Contact Customer")
+
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Sole Address"
+		addr.address_type = "Billing"
+		addr.address_line1 = "10 Street"
+		addr.city = "Giza"
+		addr.country = "Egypt"
+		addr.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		addr.insert(ignore_permissions=True)
+		frappe.db.set_value("Customer", customer.name, "customer_primary_address", addr.name)
+
+		results = get_linked_contacts_for_name_sync("Customer", customer.name)
+		self.assertEqual(len(results), 1)
+		self.assertIsNone(results[0]["contact"])
+		self.assertTrue(results[0]["linked_addresses"])
+		self.assertEqual(results[0]["linked_addresses"][0]["name"], addr.name)
+
+	def test_update_contact_names_updates_address_title(self):
+		addr1 = frappe.new_doc("Address")
+		addr1.address_title = "Original Title 1"
+		addr1.address_line1 = "11 Main St"
+		addr1.city = "Cairo"
+		addr1.country = "Egypt"
+		addr1.insert(ignore_permissions=True)
+
+		addr2 = frappe.new_doc("Address")
+		addr2.address_title = "Original Title 2"
+		addr2.address_line1 = "22 Main St"
+		addr2.city = "Cairo"
+		addr2.country = "Egypt"
+		addr2.insert(ignore_permissions=True)
+
+		# Update only addr1, leaving addr2 untouched
+		results = update_contact_names(
+			new_name="Renamed Company",
+			linked_addresses=[addr1.name],
+		)
+
+		self.assertEqual(frappe.db.get_value("Address", addr1.name, "address_title"), "Renamed Company")
+		self.assertEqual(frappe.db.get_value("Address", addr2.name, "address_title"), "Original Title 2")
+		self.assertTrue(any(r["doctype"] == "Address" and r["name"] == addr1.name and r["status"] == "updated" for r in results))
+
+
