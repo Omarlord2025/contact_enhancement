@@ -77,7 +77,7 @@ class TestPhoneCountryResolutionReport(FrappeTestCase):
 		self.assertEqual(matching["contact"], contact.name)
 
 	def test_resolve_phone_country_row_success_saves_country_and_landline_and_leaves_the_report(self):
-		contact, row_name = self._make_unresolved_row("07400123002")
+		contact, row_name = self._make_unresolved_row("02079460002")
 
 		result = resolve_phone_country_row(contact.name, row_name, "United Kingdom", landline=1)
 
@@ -88,7 +88,8 @@ class TestPhoneCountryResolutionReport(FrappeTestCase):
 			["phone", "country", "custom_landline", "custom_country_resolution"],
 			as_dict=True,
 		)
-		self.assertEqual(saved.phone, "+447400123002")
+		# Landlines are stored in national-digit form (no +44 prefix), not E.164.
+		self.assertEqual(saved.phone, "02079460002")
 		self.assertEqual(saved.country, "United Kingdom")
 		self.assertEqual(saved.custom_landline, 1)
 		self.assertEqual(saved.custom_country_resolution, "Manual")

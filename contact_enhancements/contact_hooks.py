@@ -580,42 +580,69 @@ def resolve_phone_country(phone):
 	return None
 
 
-def normalize_and_validate_contact_phone(phone, country, is_landline=False):
+def normalize_and_validate_contact_phone(
+	phone, country, is_landline=False, is_hotline=False
+):
 	"""Validate one phone number against a specific country's own
-	numbering plan, and return it in international E.164 form (e.g.
-	"+201012345678", not "01012345678" or "010 1234 5678").
+	numbering plan (or validate as a call-center hotline / short code),
+	and return the normalized number.
 
-	This is a deliberate reversal of this app's own earlier convention of
-	storing the local dialing form - done for genuine reasons (one
-	canonical format instead of one-per-country ambiguity, direct
-	WhatsApp/Telegram click-to-chat compatibility, no future dependence on
-	the row's own country to interpret the stored value), not a casual
-	rename. See docs/e164_impact_audit.md for the bench-wide audit of
-	every place this format change could matter, performed before this
-	change shipped.
+	Mobile numbers are returned in E.164 form (e.g. "+201012345678") so
+	they can be compared unambiguously and stored in the uniqueness index.
+	Landline numbers are returned in national-digit form (e.g. "0572423724"
+	for Egyptian landlines) - an international country-code prefix makes no
+	sense for a fixed-line number that can only be reached via local dialling
+	with its own trunk code ("02", "03", etc.); stripping it would silently
+	destroy the area-code prefix and make the number undiallable.  Hotlines
+	return only their bare digit sequence (e.g. "19999").
 
 	Args:
 		phone: the raw phone number as typed.
 		country: name of a Country record - which numbering plan to check
-			the number against if it has no country code of its own (see
-			this section's own module-level docstring).
-		is_landline: the row's own custom_landline flag - used only to
-			pick a more relevant example number in a validation error;
-			never gates acceptance (see this section's own module-level
-			docstring for why).
+			the number against if it has no country code of its own.
+		is_landline: the row's own custom_landline flag. When True, strictly
+			validates that the number is a fixed-line number (including city area code)
+			and NOT a mobile number.  The stored value is national-digit form.
+		is_hotline: the row's own custom_hotline flag. When True, validates
+			that the number is a short code / call-center hotline (e.g. 19999).
 
 	Returns:
-		The normalized phone number in E.164 form.
+		The normalized phone number:
+		  - Hotline  → bare digit string (e.g. "19999")
+		  - Landline → national digit string (e.g. "0572423724")
+		  - Mobile   → E.164 string (e.g. "+201012345678")
 
 	Raises:
 		frappe.ValidationError: if the number can't be parsed, or isn't
 			valid for the selected country (and carries no country code
 			of its own that would say otherwise).
 	"""
-	region = _phonenumbers_region_for_country(country)
 	raw = (phone or "").strip()
 	if not raw:
 		frappe.throw(_("Enter a phone number."))
+
+	region = _phonenumbers_region_for_country(country)
+
+	if is_hotline:
+		cleaned = re.sub(r"[\s\-\.\(\)]", "", raw)
+		if not cleaned.isdigit() or not (3 <= len(cleaned) <= 7):
+			frappe.throw(
+				_(
+					"{0} is not a valid hotline number for {1}. Hotlines must be 3-7 digits (e.g. 19999 or 16123)."
+				).format(raw, country)
+			)
+		if region:
+			try:
+				from phonenumbers import shortnumberinfo
+
+				parsed_short = phonenumbers.parse(cleaned, region)
+				if not shortnumberinfo.is_possible_short_number(parsed_short):
+					frappe.throw(
+						_("{0} is not a valid hotline/short code for {1}.").format(raw, country)
+					)
+			except phonenumbers.NumberParseException:
+				pass
+		return cleaned
 
 	try:
 		parsed = phonenumbers.parse(raw, region)
@@ -623,6 +650,12 @@ def normalize_and_validate_contact_phone(phone, country, is_landline=False):
 		parsed = None
 
 	if not parsed or not phonenumbers.is_valid_number(parsed):
+		if is_landline and region == "EG":
+			frappe.throw(
+				_(
+					"{0} is not a valid landline number for Egypt. Egyptian landlines must include the city area code (e.g. 02 for Cairo, 03 for Alexandria)."
+				).format(raw)
+			)
 		example = phonenumbers.example_number_for_type(
 			region, PhoneNumberType.FIXED_LINE if is_landline else PhoneNumberType.MOBILE
 		)
@@ -635,6 +668,29 @@ def normalize_and_validate_contact_phone(phone, country, is_landline=False):
 		)
 		frappe.throw(_("{0} is not a valid phone number for {1}.{2}").format(raw, country, hint))
 
+	if is_landline:
+		ntype = phonenumbers.number_type(parsed)
+		if ntype == PhoneNumberType.MOBILE:
+			frappe.throw(
+				_(
+					"{0} is a mobile number, not a landline. Please uncheck 'Landline' or enter a valid fixed-line number."
+				).format(raw)
+			)
+		if ntype not in (PhoneNumberType.FIXED_LINE, PhoneNumberType.FIXED_LINE_OR_MOBILE):
+			frappe.throw(
+				_("{0} is not a valid landline/fixed-line number for {1}.").format(raw, country)
+			)
+		# Landlines are stored in national-digit form, not E.164.
+		# phonenumbers.format_number(NATIONAL) returns e.g. "057 2423724" for
+		# Egyptian landlines - strip non-digits to get "0572423724", which is
+		# exactly what a user would dial locally (trunk code + subscriber number).
+		# Returning E.164 here would store "+20572423724", which is misleading
+		# (international prefix on a local-only number) and was the bug the user
+		# hit. The uniqueness index already exempts landline rows, so there is no
+		# requirement to be in E.164 for uniqueness purposes.
+		national = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
+		return re.sub(r"\D", "", national)
+
 	return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
@@ -642,34 +698,13 @@ def _national_digits(phone_e164):
 	"""Bare national-significant-number digits, no country code, no
 	formatting - e.g. "01012345678" for "+201012345678" - for populating
 	Contact Phone.custom_phone_national.
-
-	Exists because phone itself is now always E.164 (a genuine, deliberate
-	convention change from the local form this app used to store), but a
-	LIKE search against an E.164 value can't reliably find a Contact by
-	the local-format number staff are used to typing - the country-code
-	digits get in the way for every country except (coincidentally,
-	fragile even then) Egypt. custom_phone_national is a hidden,
-	search-only auxiliary field this app's search queries also match
-	against - see api/lead_lookup._contact_search_query.
-
-	Never raises: phone_e164 has already been validated E.164 by the
-	caller (normalize_and_validate_contact_phone already ran on it), so
-	re-parsing it here (region-less - the "+" prefix is self-describing)
-	cannot fail. This reproduces exactly the local-form value this app
-	used to return as its primary phone format, before the E.164
-	conversion - same phonenumbers.PhoneNumberFormat.NATIONAL + digit-
-	strip technique, just now feeding a secondary field instead of the
-	primary one.
-
-	Args:
-		phone_e164: an already-normalized E.164 phone number.
-
-	Returns:
-		The national digits only, as a string.
 	"""
-	parsed = phonenumbers.parse(phone_e164)
-	national = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
-	return re.sub(r"\D", "", national)
+	try:
+		parsed = phonenumbers.parse(phone_e164)
+		national = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
+		return re.sub(r"\D", "", national)
+	except Exception:
+		return re.sub(r"\D", "", phone_e164 or "")
 
 
 def _running_in_background_job():
@@ -757,9 +792,12 @@ def normalize_and_validate_contact_phones(doc, method=None):
 		if detected_country and detected_country != row.country:
 			row.country = detected_country
 
+		is_hotline = bool(row.get("custom_hotline"))
+		is_landline = bool(row.get("custom_landline"))
+
 		try:
 			row.phone = normalize_and_validate_contact_phone(
-				row.phone, row.country, is_landline=row.custom_landline
+				row.phone, row.country, is_landline=is_landline, is_hotline=is_hotline
 			)
 			row.custom_phone_national = _national_digits(row.phone)
 		except frappe.ValidationError:
@@ -874,7 +912,11 @@ def enforce_unique_mobile_number(doc, method=None):
 		{row.name: row.phone for row in previous_doc.get("phone_nos", [])} if previous_doc else {}
 	)
 
-	live_rows = [row for row in doc.get("phone_nos", []) if not row.custom_landline and row.phone]
+	live_rows = [
+		row
+		for row in doc.get("phone_nos", [])
+		if not row.custom_landline and not row.get("custom_hotline") and row.phone
+	]
 
 	for row in live_rows:
 		if not row.is_new() and previous_phones.get(row.name) == row.phone:
@@ -943,16 +985,22 @@ MOBILE_ORIENTED_PHONE_FLAGS = ("is_primary_mobile_no", "custom_whatsapp", "custo
 
 
 def _enforce_landline_exclusivity(row):
-	"""Make one Contact Phone row's landline/mobile-channel flags
-	mutually exclusive - see this section's own module-level docstring.
+	"""Make one Contact Phone row's hotline, landline, and mobile-channel flags
+	mutually exclusive.
 
 	Args:
 		row: one Contact Phone child row (mutated in place).
 	"""
-	if row.custom_landline:
+	if row.get("custom_hotline"):
+		row.custom_landline = 0
+		for fieldname in MOBILE_ORIENTED_PHONE_FLAGS:
+			row.set(fieldname, 0)
+	elif row.custom_landline:
+		row.set("custom_hotline", 0)
 		for fieldname in MOBILE_ORIENTED_PHONE_FLAGS:
 			row.set(fieldname, 0)
 	elif any(row.get(fieldname) for fieldname in MOBILE_ORIENTED_PHONE_FLAGS):
+		row.set("custom_hotline", 0)
 		row.custom_landline = 0
 
 

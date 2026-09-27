@@ -164,12 +164,29 @@ class TestNormalizeAndValidateContactPhone(FrappeTestCase):
 			"+20223456789",
 		)
 
-	def test_accepts_egypt_mobile_number_even_when_marked_landline(self):
-		# The flag doesn't gate acceptance in either direction.
+	def test_rejects_egypt_mobile_number_when_marked_landline(self):
+		with self.assertRaises(frappe.ValidationError):
+			normalize_and_validate_contact_phone("01033344455", "Egypt", is_landline=True)
+
+	def test_rejects_egypt_landline_missing_area_code(self):
+		with self.assertRaises(frappe.ValidationError):
+			normalize_and_validate_contact_phone("2345678", "Egypt", is_landline=True)
+
+	def test_accepts_valid_hotlines(self):
 		self.assertEqual(
-			normalize_and_validate_contact_phone("01033344455", "Egypt", is_landline=True),
-			"+201033344455",
+			normalize_and_validate_contact_phone("19999", "Egypt", is_hotline=True),
+			"19999",
 		)
+		self.assertEqual(
+			normalize_and_validate_contact_phone("16123", "Egypt", is_hotline=True),
+			"16123",
+		)
+
+	def test_rejects_invalid_hotline(self):
+		with self.assertRaises(frappe.ValidationError):
+			normalize_and_validate_contact_phone("01012345678", "Egypt", is_hotline=True)
+		with self.assertRaises(frappe.ValidationError):
+			normalize_and_validate_contact_phone("12", "Egypt", is_hotline=True)
 
 	def test_validates_a_non_egypt_country_mobile_number(self):
 		# Not Egypt-specific - a genuine UK mobile, checked against the
@@ -388,8 +405,13 @@ class TestNormalizeAndValidateContactPhones(FrappeTestCase):
 
 		normalize_and_validate_contact_phones(doc)
 
+		# Mobile row → E.164; landline row → national-digit form (no +20 prefix).
+		# Landlines are local-only numbers dialled with a trunk code ("02"
+		# for Cairo) - storing them as E.164 (+20223456789) was the bug the
+		# user reported: the country prefix makes no sense for a fixed-line
+		# number that's never dialled internationally.
 		self.assertEqual(doc.phone_nos[0].phone, "+201033344455")
-		self.assertEqual(doc.phone_nos[1].phone, "+20223456789")
+		self.assertEqual(doc.phone_nos[1].phone, "0223456789")
 		self.assertEqual(doc.phone_nos[0].custom_phone_national, "01033344455")
 		self.assertEqual(doc.phone_nos[1].custom_phone_national, "0223456789")
 
@@ -760,10 +782,26 @@ class TestEnforceUniqueMobileNumber(FrappeTestCase):
 			make_contact(phone_nos=["01099822201"])
 
 	def test_allows_a_duplicate_landline(self):
-		make_contact(phone_nos=["01099822202"])
+		contact1 = frappe.new_doc("Contact")
+		contact1.first_name = "Landline 1"
+		contact1.append("phone_nos", {"phone": "0223456789", "country": "Egypt", "custom_landline": 1})
+		contact1.insert(ignore_permissions=True)
+
 		other = frappe.new_doc("Contact")
 		other.first_name = "Landline Duplicate"
-		other.append("phone_nos", {"phone": "01099822202", "custom_landline": 1})
+		other.append("phone_nos", {"phone": "0223456789", "country": "Egypt", "custom_landline": 1})
+		other.insert(ignore_permissions=True)  # must not raise
+		self.assertTrue(other.name)
+
+	def test_allows_a_duplicate_hotline(self):
+		contact1 = frappe.new_doc("Contact")
+		contact1.first_name = "Hotline 1"
+		contact1.append("phone_nos", {"phone": "19999", "country": "Egypt", "custom_hotline": 1})
+		contact1.insert(ignore_permissions=True)
+
+		other = frappe.new_doc("Contact")
+		other.first_name = "Hotline Duplicate"
+		other.append("phone_nos", {"phone": "19999", "country": "Egypt", "custom_hotline": 1})
 		other.insert(ignore_permissions=True)  # must not raise
 		self.assertTrue(other.name)
 
@@ -816,8 +854,8 @@ class TestEnforceUniqueMobileNumber(FrappeTestCase):
 	def test_a_duplicate_landline_row_on_one_contact_is_allowed(self):
 		doc = frappe.new_doc("Contact")
 		doc.first_name = "Self Duplicate Landline"
-		doc.append("phone_nos", {"phone": "+201099822208", "country": "Egypt", "custom_landline": 1})
-		doc.append("phone_nos", {"phone": "+201099822208", "country": "Egypt", "custom_landline": 1})
+		doc.append("phone_nos", {"phone": "+20223456789", "country": "Egypt", "custom_landline": 1})
+		doc.append("phone_nos", {"phone": "+20223456789", "country": "Egypt", "custom_landline": 1})
 		enforce_unique_mobile_number(doc)  # must not raise
 
 	def test_does_not_retroactively_fire_on_unrelated_resave_of_a_self_duplicate(self):

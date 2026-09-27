@@ -218,65 +218,104 @@ function stage_pending_phone(frm) {
 }
 
 const LANDLINE_FLAG = "custom_landline";
+const HOTLINE_FLAG = "custom_hotline";
 const MOBILE_ORIENTED_PHONE_FLAGS = ["is_primary_mobile_no", "custom_whatsapp", "custom_telegram"];
 
 // Mirrors contact_hooks.py's own module docstring above
 // enforce_contact_phone_channel_exclusivity - that's the single source of
-// truth for the reasoning (a landline can't be WhatsApp/Telegram-capable
+// truth for the reasoning (a hotline or landline can't be WhatsApp/Telegram-capable
 // or a primary mobile number); this only mirrors the behavior live in the
 // grid, the instant a checkbox is clicked, instead of waiting for save.
-// Contact Phone is only ever embedded by Contact itself (confirmed by
-// grepping every doctype definition in this bench for "options": "Contact
-// Phone" - see contact_enhancements/CLAUDE.md), so this one handler is
-// already the complete picture.
-//
-// Deliberately mutates locals[cdt][cdn] directly and does one explicit
-// grid.refresh() at the end, instead of chaining frappe.model.set_value
-// calls for the sibling fields - confirmed by testing that even a single
-// set_value call for a sibling field, triggered from inside this same
-// field's own change handler (however it's deferred - inline, awaited,
-// or setTimeout'd), reliably clears the *other* field back to unchecked
-// via its own further refresh, including the field that was just clicked
-// to get here in the first place. Setting the row's own data directly and
-// refreshing once, after this handler has fully returned, avoids that
-// cascade entirely.
-function apply_landline_exclusivity_and_refresh(frm, cdt, cdn) {
+function apply_channel_exclusivity_and_refresh(frm, cdt, cdn, triggered_field) {
 	const row = locals[cdt][cdn];
 	let changed = false;
 
-	if (row[LANDLINE_FLAG]) {
+	if (triggered_field === HOTLINE_FLAG && row[HOTLINE_FLAG]) {
+		if (row[LANDLINE_FLAG]) {
+			row[LANDLINE_FLAG] = 0;
+			changed = true;
+		}
 		MOBILE_ORIENTED_PHONE_FLAGS.forEach((fieldname) => {
 			if (row[fieldname]) {
 				row[fieldname] = 0;
 				changed = true;
 			}
 		});
-	} else if (MOBILE_ORIENTED_PHONE_FLAGS.some((fieldname) => row[fieldname])) {
-		row[LANDLINE_FLAG] = 0;
-		changed = true;
+	} else if (triggered_field === LANDLINE_FLAG && row[LANDLINE_FLAG]) {
+		if (row[HOTLINE_FLAG]) {
+			row[HOTLINE_FLAG] = 0;
+			changed = true;
+		}
+		MOBILE_ORIENTED_PHONE_FLAGS.forEach((fieldname) => {
+			if (row[fieldname]) {
+				row[fieldname] = 0;
+				changed = true;
+			}
+		});
+	} else if (MOBILE_ORIENTED_PHONE_FLAGS.includes(triggered_field) && row[triggered_field]) {
+		if (row[HOTLINE_FLAG]) {
+			row[HOTLINE_FLAG] = 0;
+			changed = true;
+		}
+		if (row[LANDLINE_FLAG]) {
+			row[LANDLINE_FLAG] = 0;
+			changed = true;
+		}
+	} else {
+		// General fallback sync
+		if (row[HOTLINE_FLAG]) {
+			if (row[LANDLINE_FLAG]) {
+				row[LANDLINE_FLAG] = 0;
+				changed = true;
+			}
+			MOBILE_ORIENTED_PHONE_FLAGS.forEach((fieldname) => {
+				if (row[fieldname]) {
+					row[fieldname] = 0;
+					changed = true;
+				}
+			});
+		} else if (row[LANDLINE_FLAG]) {
+			if (row[HOTLINE_FLAG]) {
+				row[HOTLINE_FLAG] = 0;
+				changed = true;
+			}
+			MOBILE_ORIENTED_PHONE_FLAGS.forEach((fieldname) => {
+				if (row[fieldname]) {
+					row[fieldname] = 0;
+					changed = true;
+				}
+			});
+		} else if (MOBILE_ORIENTED_PHONE_FLAGS.some((fieldname) => row[fieldname])) {
+			if (row[HOTLINE_FLAG]) {
+				row[HOTLINE_FLAG] = 0;
+				changed = true;
+			}
+			if (row[LANDLINE_FLAG]) {
+				row[LANDLINE_FLAG] = 0;
+				changed = true;
+			}
+		}
 	}
 
 	if (changed) {
-		// refresh_row(cdn), not the whole grid's own refresh() - a full
-		// grid refresh rebuilds every row's DOM from scratch, which left
-		// the *other* checkbox in this same row unresponsive to a
-		// follow-up click for a while after (confirmed by testing).
-		// refresh_row only rebuilds this one row.
 		frm.fields_dict.phone_nos.grid.refresh_row(cdn);
 	}
 }
 
 frappe.ui.form.on("Contact Phone", {
+	custom_hotline(frm, cdt, cdn) {
+		apply_channel_exclusivity_and_refresh(frm, cdt, cdn, HOTLINE_FLAG);
+	},
 	custom_landline(frm, cdt, cdn) {
-		apply_landline_exclusivity_and_refresh(frm, cdt, cdn);
+		apply_channel_exclusivity_and_refresh(frm, cdt, cdn, LANDLINE_FLAG);
 	},
 	is_primary_mobile_no(frm, cdt, cdn) {
-		apply_landline_exclusivity_and_refresh(frm, cdt, cdn);
+		apply_channel_exclusivity_and_refresh(frm, cdt, cdn, "is_primary_mobile_no");
 	},
 	custom_whatsapp(frm, cdt, cdn) {
-		apply_landline_exclusivity_and_refresh(frm, cdt, cdn);
+		apply_channel_exclusivity_and_refresh(frm, cdt, cdn, "custom_whatsapp");
 	},
 	custom_telegram(frm, cdt, cdn) {
-		apply_landline_exclusivity_and_refresh(frm, cdt, cdn);
+		apply_channel_exclusivity_and_refresh(frm, cdt, cdn, "custom_telegram");
 	},
 });

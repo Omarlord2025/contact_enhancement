@@ -85,55 +85,70 @@ contact_enhancements._show_name_sync_dialog = function (
 
 	let is_settled = false;
 
+	const source_address = (contacts[0] && contacts[0].source_address) || "";
+	const source_address_title = (contacts[0] && contacts[0].source_address_title) || source_address;
+
+	const fields = [
+		{
+			// ملخص الاسم القديم والجديد
+			fieldtype: "HTML",
+			fieldname: "change_summary",
+			options: `
+				<div style="margin-bottom:14px;padding:10px 12px;
+				            background:var(--subtle-bg);border-radius:var(--border-radius);
+				            font-size:var(--text-base);direction:rtl;text-align:right;">
+					<span class="text-muted">${esc(doctype_ar)}:</span>
+					<span style="text-decoration:line-through;margin:0 8px;
+					             color:var(--text-muted);">${esc(old_name)}</span>
+					<span style="color:var(--text-muted);">&#8594;</span>
+					<span style="margin-right:8px;font-weight:600;">${esc(new_name)}</span>
+				</div>`,
+		},
+		{
+			// حقل الاسم الجديد القابل للتعديل
+			fieldtype: "Data",
+			fieldname: "new_name",
+			label: __("الاسم الجديد لكتابته في جهات الاتصال والسجلات المرتبطة"),
+			default: new_name,
+			description: __(
+				"تمت التعبئة مسبقاً من اسم {0} الجديد — يمكنك تعديله قبل الحفظ إذا لزم الأمر.",
+				[doctype_ar]
+			),
+			reqd: 1,
+		},
+	];
+
+	if (source_address) {
+		fields.push({
+			fieldtype: "Check",
+			fieldname: "sync_address",
+			label: __("مزامنة العنوان مع السجلات المحددة التي لا تملك عنواناً ({0})", [esc(source_address_title)]),
+			default: 1,
+		});
+	}
+
+	if (!is_individual) {
+		fields.push({
+			fieldtype: "HTML",
+			fieldname: "company_note",
+			options: `<div class="alert" style="background:var(--yellow-highlight);
+				          border-right:3px solid var(--yellow-500);
+				          padding:8px 12px;margin:0 0 12px;border-radius:var(--border-radius);
+				          font-size:var(--text-sm);direction:rtl;text-align:right;">
+					<b>سجل شركة / شراكة</b> &mdash;
+					المزامنة التلقائية للأسماء لا تنطبق على سجلات الشركات. أي تحديد هنا يُعتبر تعديلاً يدوياً مقصوداً.
+				</div>`,
+		});
+	}
+
+	fields.push({
+		fieldtype: "HTML",
+		fieldname: "contacts_list",
+	});
+
 	const dialog = new frappe.ui.Dialog({
 		title: __("تحديث جهات الاتصال والسجلات المرتبطة؟"),
-		fields: [
-			{
-				// ملخص الاسم القديم والجديد
-				fieldtype: "HTML",
-				fieldname: "change_summary",
-				options: `
-					<div style="margin-bottom:14px;padding:10px 12px;
-					            background:var(--subtle-bg);border-radius:var(--border-radius);
-					            font-size:var(--text-base);direction:rtl;text-align:right;">
-						<span class="text-muted">${esc(doctype_ar)}:</span>
-						<span style="text-decoration:line-through;margin:0 8px;
-						             color:var(--text-muted);">${esc(old_name)}</span>
-						<span style="color:var(--text-muted);">&#8594;</span>
-						<span style="margin-right:8px;font-weight:600;">${esc(new_name)}</span>
-					</div>`,
-			},
-			{
-				// حقل الاسم الجديد القابل للتعديل
-				fieldtype: "Data",
-				fieldname: "new_name",
-				label: __("الاسم الجديد لكتابته في جهات الاتصال والسجلات المرتبطة"),
-				default: new_name,
-				description: __(
-					"تمت التعبئة مسبقاً من اسم {0} الجديد — يمكنك تعديله قبل الحفظ إذا لزم الأمر.",
-					[doctype_ar]
-				),
-				reqd: 1,
-			},
-			{
-				// تنبيه الشركات والشراكات
-				fieldtype: "HTML",
-				fieldname: "company_note",
-				options: is_individual
-					? ""
-					: `<div class="alert" style="background:var(--yellow-highlight);
-					          border-right:3px solid var(--yellow-500);
-					          padding:8px 12px;margin:0 0 12px;border-radius:var(--border-radius);
-					          font-size:var(--text-sm);direction:rtl;text-align:right;">
-						<b>سجل شركة / شراكة</b> &mdash;
-						المزامنة التلقائية للأسماء لا تنطبق على سجلات الشركات. أي تحديد هنا يُعتبر تعديلاً يدوياً مقصوداً.
-					</div>`,
-			},
-			{
-				fieldtype: "HTML",
-				fieldname: "contacts_list",
-			},
-		],
+		fields: fields,
 		primary_action_label: __("تحديث وحفظ"),
 		secondary_action_label: __("حفظ {0} فقط", [doctype_ar]),
 		secondary_action() {
@@ -355,6 +370,10 @@ function _do_update(dialog, values, contacts, frm, config, on_success) {
 			contacts: selected_contacts,
 			new_name: new_name,
 			linked_records: selected_links,
+			sync_address: values.sync_address !== undefined ? values.sync_address : 1,
+			source_address: (contacts[0] && contacts[0].source_address) || "",
+			source_doctype: config.doctype,
+			source_name: frm.doc.name,
 		},
 		freeze: true,
 		freeze_message: __("جاري تحديث جهات الاتصال والسجلات المرتبطة…"),

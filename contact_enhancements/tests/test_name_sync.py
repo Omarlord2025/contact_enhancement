@@ -172,3 +172,150 @@ class TestNameSyncApi(FrappeTestCase):
 		l_first = frappe.db.get_value("Lead", lead.name, "first_name")
 		self.assertEqual(l_first, "New Unified Name")
 
+	def test_get_linked_contacts_surfaces_source_address(self):
+		contact = make_contact(first_name="Address Source Contact")
+		customer = make_customer(customer_primary_contact=contact.name)
+
+		# Link contact to customer
+		contact.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		contact.save(ignore_permissions=True)
+
+		# Create address linked to customer
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Customer Headquarters"
+		addr.address_line1 = "10 Street"
+		addr.city = "Cairo"
+		addr.country = "Egypt"
+		addr.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		addr.insert(ignore_permissions=True)
+
+		frappe.db.set_value("Customer", customer.name, "customer_primary_address", addr.name)
+
+		results = get_linked_contacts_for_name_sync("Customer", customer.name)
+		self.assertEqual(len(results), 1)
+		self.assertEqual(results[0]["source_address"], addr.name)
+		self.assertEqual(results[0]["source_address_title"], "Customer Headquarters")
+
+	def test_update_contact_names_propagates_address_and_creates_dynamic_links(self):
+		contact = make_contact(first_name="No Address Contact")
+		supplier = make_supplier(supplier_name="No Address Supplier", supplier_type="Individual")
+		customer = make_customer(customer_name="Source Customer")
+
+		# Create address linked to customer
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Central Office"
+		addr.address_line1 = "456 Pyramid St"
+		addr.city = "Giza"
+		addr.country = "Egypt"
+		addr.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		addr.insert(ignore_permissions=True)
+		frappe.db.set_value("Customer", customer.name, "customer_primary_address", addr.name)
+
+		self.assertFalse(frappe.db.get_value("Contact", contact.name, "address"))
+		self.assertFalse(frappe.db.get_value("Supplier", supplier.name, "supplier_primary_address"))
+
+		update_contact_names(
+			contacts=[contact.name],
+			new_name="Synced Name",
+			linked_records=[{"doctype": "Supplier", "name": supplier.name}],
+			sync_address=True,
+			source_address=addr.name,
+		)
+
+		# Verify address fields populated
+		self.assertEqual(frappe.db.get_value("Contact", contact.name, "address"), addr.name)
+		self.assertEqual(frappe.db.get_value("Supplier", supplier.name, "supplier_primary_address"), addr.name)
+
+		# Verify Dynamic Links created
+		contact_link = frappe.db.exists(
+			"Dynamic Link",
+			{"parenttype": "Address", "parent": addr.name, "link_doctype": "Contact", "link_name": contact.name},
+		)
+		supplier_link = frappe.db.exists(
+			"Dynamic Link",
+			{"parenttype": "Address", "parent": addr.name, "link_doctype": "Supplier", "link_name": supplier.name},
+		)
+		self.assertTrue(contact_link)
+		self.assertTrue(supplier_link)
+
+	def test_update_contact_names_does_not_propagate_address_when_disabled(self):
+		contact = make_contact(first_name="No Sync Contact")
+		supplier = make_supplier(supplier_name="No Sync Supplier", supplier_type="Individual")
+
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Excluded Office"
+		addr.address_line1 = "789 Nile Corniche"
+		addr.city = "Cairo"
+		addr.country = "Egypt"
+		addr.insert(ignore_permissions=True)
+
+		update_contact_names(
+			contacts=[contact.name],
+			new_name="Name Without Address",
+			linked_records=[{"doctype": "Supplier", "name": supplier.name}],
+			sync_address=False,
+			source_address=addr.name,
+		)
+
+		self.assertFalse(frappe.db.get_value("Contact", contact.name, "address"))
+		self.assertFalse(frappe.db.get_value("Supplier", supplier.name, "supplier_primary_address"))
+
+	def test_update_contact_names_does_not_overwrite_existing_address(self):
+		contact = make_contact(first_name="Existing Addr Contact")
+		supplier = make_supplier(supplier_name="Existing Addr Supplier", supplier_type="Individual")
+
+		addr_existing = frappe.new_doc("Address")
+		addr_existing.address_title = "Supplier's Own Office"
+		addr_existing.address_line1 = "1 Existing Rd"
+		addr_existing.city = "Alexandria"
+		addr_existing.country = "Egypt"
+		addr_existing.insert(ignore_permissions=True)
+		frappe.db.set_value("Supplier", supplier.name, "supplier_primary_address", addr_existing.name)
+
+		addr_source = frappe.new_doc("Address")
+		addr_source.address_title = "Source Office"
+		addr_source.address_line1 = "2 Source Rd"
+		addr_source.city = "Cairo"
+		addr_source.country = "Egypt"
+		addr_source.insert(ignore_permissions=True)
+
+		update_contact_names(
+			contacts=[contact.name],
+			new_name="Another Synced Name",
+			linked_records=[{"doctype": "Supplier", "name": supplier.name}],
+			sync_address=True,
+			source_address=addr_source.name,
+		)
+
+		# Supplier's address should remain unchanged (not overwritten)
+		self.assertEqual(frappe.db.get_value("Supplier", supplier.name, "supplier_primary_address"), addr_existing.name)
+		# Contact had no address, so it received addr_source
+		self.assertEqual(frappe.db.get_value("Contact", contact.name, "address"), addr_source.name)
+
+	def test_get_linked_contacts_surfaces_address_from_linked_customer_when_contact_has_none(self):
+		"""Regression: when the dialog is opened from a Contact form
+		(doctype="Contact"), source_address must be discovered from the
+		Contact's linked Customer if the Contact itself has no address.
+		Before the fix, source_address was always empty from this entry
+		point and the sync checkbox never appeared."""
+		contact = make_contact(first_name="Contact With No Address")
+		customer = make_customer(customer_name="Addr Via Customer", customer_primary_contact=contact.name)
+		contact.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		contact.save(ignore_permissions=True)
+
+		# Contact has no address; Customer does.
+		addr = frappe.new_doc("Address")
+		addr.address_title = "Customer Office Only"
+		addr.address_line1 = "99 Delta Rd"
+		addr.city = "Cairo"
+		addr.country = "Egypt"
+		addr.append("links", {"link_doctype": "Customer", "link_name": customer.name})
+		addr.insert(ignore_permissions=True)
+		frappe.db.set_value("Customer", customer.name, "customer_primary_address", addr.name)
+
+		# Dialog opened from the Contact form, not the Customer form.
+		results = get_linked_contacts_for_name_sync("Contact", contact.name)
+		self.assertTrue(results)
+		self.assertEqual(results[0]["source_address"], addr.name)
+		self.assertEqual(results[0]["source_address_title"], "Customer Office Only")
+

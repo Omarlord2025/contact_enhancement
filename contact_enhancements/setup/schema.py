@@ -52,14 +52,35 @@ def ensure_contact_phone_uniqueness_constraint(throw_if_duplicates=True):
 		else:
 			print(f"\n[WARNING] {msg}\n")
 			frappe.log_error(title="contact_enhancements: unique mobile index deferred due to duplicates", message=msg)
-			return
+	has_hotline_col = "custom_hotline" in frappe.db.get_table_columns("Contact Phone")
+	hotline_cond = "AND `custom_hotline` = 0" if has_hotline_col else ""
+	expr = f"(CASE WHEN `custom_landline` = 0 {hotline_cond} THEN `phone` ELSE NULL END)"
 
 	if UNIQUENESS_COLUMN not in frappe.db.get_table_columns("Contact Phone"):
 		frappe.db.sql_ddl(
 			f"ALTER TABLE `tabContact Phone` ADD COLUMN `{UNIQUENESS_COLUMN}` VARCHAR(140) "
-			f"GENERATED ALWAYS AS (CASE WHEN `custom_landline` = 0 THEN `phone` ELSE NULL END) STORED"
+			f"GENERATED ALWAYS AS {expr} STORED"
 		)
 		print(f"contact_enhancements: added generated column {UNIQUENESS_COLUMN} on Contact Phone.")
+	elif has_hotline_col:
+		current_expr = frappe.db.sql(
+			"""SELECT GENERATION_EXPRESSION FROM INFORMATION_SCHEMA.COLUMNS
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tabContact Phone'
+			AND COLUMN_NAME = %s""",
+			UNIQUENESS_COLUMN,
+			pluck=True,
+		)
+		if current_expr and "custom_hotline" not in (current_expr[0] or ""):
+			existing_index = frappe.db.sql(
+				"SHOW INDEX FROM `tabContact Phone` WHERE Key_name = %s", UNIQUENESS_INDEX
+			)
+			if existing_index:
+				frappe.db.sql_ddl(f"ALTER TABLE `tabContact Phone` DROP INDEX `{UNIQUENESS_INDEX}`")
+			frappe.db.sql_ddl(
+				f"ALTER TABLE `tabContact Phone` MODIFY COLUMN `{UNIQUENESS_COLUMN}` VARCHAR(140) "
+				f"GENERATED ALWAYS AS {expr} STORED"
+			)
+			print(f"contact_enhancements: updated generated column {UNIQUENESS_COLUMN} on Contact Phone to exempt hotlines.")
 
 	existing_index = frappe.db.sql(
 		"SHOW INDEX FROM `tabContact Phone` WHERE Key_name = %s", UNIQUENESS_INDEX

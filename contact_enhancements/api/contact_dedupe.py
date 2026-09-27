@@ -179,14 +179,18 @@ def _phones_shared_by_multiple_contacts():
 		A list of phone values, each shared by 2+ distinct Contacts.
 	"""
 	contact_phone = frappe.qb.DocType("Contact Phone")
+	cond = (
+		(contact_phone.custom_landline == 0)
+		& contact_phone.phone.isnotnull()
+		& (contact_phone.phone != "")
+	)
+	if "custom_hotline" in frappe.db.get_table_columns("Contact Phone"):
+		cond = cond & (contact_phone.custom_hotline == 0)
+
 	return (
 		frappe.qb.from_(contact_phone)
 		.select(contact_phone.phone)
-		.where(
-			(contact_phone.custom_landline == 0)
-			& contact_phone.phone.isnotnull()
-			& (contact_phone.phone != "")
-		)
+		.where(cond)
 		.groupby(contact_phone.phone)
 		.having(Count(contact_phone.parent).distinct() > 1)
 	).run(pluck=True)
@@ -221,9 +225,13 @@ def find_duplicate_mobile_contacts():
 		return []
 
 	# Second read fetches members for the offending numbers only.
+	filters = {"custom_landline": 0, "phone": ["in", duplicate_phones]}
+	if "custom_hotline" in frappe.db.get_table_columns("Contact Phone"):
+		filters["custom_hotline"] = 0
+
 	rows = frappe.get_all(
 		"Contact Phone",
-		filters={"custom_landline": 0, "phone": ["in", duplicate_phones]},
+		filters=filters,
 		fields=["phone", "parent"],
 		distinct=True,
 	)
