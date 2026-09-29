@@ -130,6 +130,7 @@ def create_contact_enhancements_property_setters():
 	_clear_link_field_mandatory("Customer", "customer_primary_contact")
 	_clear_link_field_mandatory("Customer", "customer_primary_address")
 	_disable_quick_entry("Customer")
+	_disable_quick_entry("Opportunity")
 
 
 def create_contact_enhancements_index_property_setters():

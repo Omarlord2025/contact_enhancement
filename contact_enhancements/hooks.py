@@ -62,6 +62,7 @@ doctype_js = {
 	"Employee": "public/js/employee.js",
 	"User": "public/js/user.js",
 	"Lead": "public/js/lead.js",
+	"Opportunity": "public/js/opportunity.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -202,6 +203,9 @@ doc_events = {
 			"contact_enhancements.lead_hooks.link_lead_contact",
 			"contact_enhancements.lead_hooks.sync_lead_address_from_contact_links",
 		],
+	},
+	"Opportunity": {
+		"on_update": "contact_enhancements.opportunity_hooks.link_opportunity_contact_and_address",
 	},
 	"Contact": {
 		"validate": [
