@@ -37,7 +37,7 @@ app_include_js = [
 	# Post-save dialog that offers to sync linked Contact names when a
 	# Customer/Supplier name changes.  Shared by customer.js and supplier.js,
 	# so it must be a genuine app_include rather than a doctype_js entry.
-	"/assets/contact_enhancements/js/name_sync_dialog.js?v=5",
+	"/assets/contact_enhancements/js/name_sync_dialog.js?v=6",
 ]
 
 # include js, css files in header of web template
