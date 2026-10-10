@@ -58,6 +58,12 @@ Applied in this exact order (each step's output feeds the next):
    Normalization: replace a word-final "ة" with "ه", and a word-final
    "ي" with "ى".
 
+6. A word starting with "عبد" (U+0639 U+0628 U+062F) directly followed by
+   the definite article "ال" (U+0627 U+0644) gets a space after "عبد":
+   "عبدالرحمن" -> "عبد الرحمن". Only the "ال" case is split, so names where
+   "عبد" is part of the name itself ("عبده", "عبدو") stay joined. Runs
+   right after rule 1 so "عبدألله" has already become "عبدالله".
+
 normalize_arabic_first_name applies these in a fixed pipeline order -
 diacritics and disallowed characters are stripped *before* the
 word-boundary-based rules (1 and 5) run, so those see the real word
@@ -91,6 +97,8 @@ YEH = "ي"  # ي - not ى "ى"
 ALEF_MAKSURA = "ى"  # ى
 HEH = "ه"  # ه
 WORD_FINAL_DISALLOWED_ENDING_PATTERN = re.compile(f"({TEH_MARBUTA}|{YEH})(?=\\s|$)")
+# Rule 6: word-initial "\u0639\u0628\u062F" (عبد) directly followed by "\u0627\u0644" (ال).
+ABD_PREFIX_PATTERN = re.compile("(^|\\s)(\u0639\u0628\u062F)(?=\u0627\u0644)")
 
 
 def _strip_diacritics(name):
@@ -198,6 +206,11 @@ def _normalize_word_initial_alef_hamza(name):
 	return WORD_INITIAL_ALEF_HAMZA_PATTERN.sub(r"\1" + PLAIN_ALEF, name)
 
 
+def _split_abd_prefix(name):
+	"""Rule 6 normalization - "عبد" directly followed by "ال" gets a space."""
+	return ABD_PREFIX_PATTERN.sub(r"\1\2 ", name)
+
+
 def _normalize_word_final_endings(name):
 	"""Rule 5 normalization - a word-final "ة" becomes "ه", and a
 	word-final "ي" becomes "ى"."""
@@ -230,6 +243,7 @@ def normalize_arabic_first_name(first_name):
 	name = _collapse_whitespace(name)
 	name = _drop_letterless_tokens(name)
 	name = _normalize_word_initial_alef_hamza(name)
+	name = _split_abd_prefix(name)
 	name = _normalize_word_final_endings(name)
 	return name
 

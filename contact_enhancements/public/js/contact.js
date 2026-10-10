@@ -69,6 +69,11 @@ function normalize_arabic_first_name(name) {
 	// 4. A word-initial "أ" (U+0623) becomes plain "ا" - "آ"/"إ" are untouched.
 	name = name.replace(/(^|\s)أ/g, "$1ا");
 
+	// 4b. Rule 6: a word-initial "عبد" directly followed by "ال" gets a
+	// space after it ("عبدالرحمن" -> "عبد الرحمن"); "عبده" stays joined.
+	// Mirrors contact_hooks._split_abd_prefix.
+	name = name.replace(/(^|\s)(\u0639\u0628\u062F)(?=\u0627\u0644)/g, "$1$2 ");
+
 	// 5. A word-final "ة" (U+0629) becomes "ه"; a word-final "ي" (U+064A,
 	// not "ى") becomes "ى".
 	name = name.replace(/(ة|ي)(?=\s|$)/g, (match) => (match === "ة" ? "ه" : "ى"));

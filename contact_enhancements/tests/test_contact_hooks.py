@@ -89,6 +89,27 @@ class TestNormalizeArabicFirstName(FrappeTestCase):
 		# space, and a word-final yeh, all in one input.
 		self.assertEqual(normalize_arabic_first_name("أحمد1  علي"), "احمد على")
 
+	def test_splits_abd_before_definite_article(self):
+		self.assertEqual(normalize_arabic_first_name("عبدالرحمن"), "عبد الرحمن")
+		self.assertEqual(normalize_arabic_first_name("عبدالله"), "عبد الله")
+
+	def test_splits_abd_mid_name(self):
+		self.assertEqual(normalize_arabic_first_name("محمد عبدالعزيز"), "محمد عبد العزيز")
+
+	def test_keeps_abd_joined_when_not_followed_by_definite_article(self):
+		self.assertEqual(normalize_arabic_first_name("عبده"), "عبده")
+		self.assertEqual(normalize_arabic_first_name("عبدو"), "عبدو")
+		self.assertEqual(normalize_arabic_first_name("عبد"), "عبد")
+
+	def test_abd_split_is_idempotent(self):
+		self.assertEqual(normalize_arabic_first_name("عبد الرحمن"), "عبد الرحمن")
+
+	def test_abd_split_is_word_initial_only(self):
+		self.assertEqual(normalize_arabic_first_name("معبدالنور"), "معبدالنور")
+
+	def test_abd_split_combines_with_other_rules(self):
+		self.assertEqual(normalize_arabic_first_name("أحمد عبدالرحمن علي"), "احمد عبد الرحمن على")
+
 
 class TestNormalizeContactFirstName(FrappeTestCase):
 	def test_insert_succeeds_with_a_previously_invalid_first_name(self):
